@@ -1,7 +1,8 @@
 /**
  * UI Ingestion Controller (Bypass CORS Module)
  * Allows users to fetch XML directly in their browser to bypass Cloudflare 403 blocks,
- * then ingest via Drag & Drop or Clipboard / Paste with DOMParser validation and IndexedDB persistence.
+ * then ingest via Drag & Drop or Clipboard / Paste with DOMParser validation.
+ * Auto-saves incrementally to IndexedDB on every paste/drop event to survive browser crashes.
  */
 
 import { XmlParser } from './xmlParser.js';
@@ -27,12 +28,13 @@ export class UiIngestController {
     this.currentUniNumber = 280;
     this.currentRole = 'destination'; // 'destination' | 'exodus'
 
-    // Temporary parsed memory buffers for current draft universe
     this.resetDraftState();
 
     this.render();
     this.bindEvents();
-    this.refreshSavedUniversesList();
+    this.loadDraftForCurrentTarget().then(() => {
+      this.refreshSavedUniversesList();
+    });
   }
 
   resetDraftState() {
@@ -54,6 +56,8 @@ export class UiIngestController {
       planetsCount: 0,
       scoresCount: 0
     };
+    this.endpointsTimestamp = {};
+    this.lastSavedTimestamp = null;
   }
 
   getUniKey() {
@@ -62,6 +66,71 @@ export class UiIngestController {
 
   getBaseUrl() {
     return `https://s${this.currentUniNumber}-${this.currentCommunity}.ogame.gameforge.com/api`;
+  }
+
+  async loadDraftForCurrentTarget() {
+    const uniKey = this.getUniKey();
+    try {
+      const draft = await this.storage.getDraft(uniKey);
+      if (draft) {
+        this.draftData = {
+          serverData: draft.serverData || null,
+          players: draft.players || null,
+          alliances: draft.alliances || null,
+          planets: draft.planets || null,
+          highscores: draft.highscores || {
+            total: false,
+            economy: false,
+            research: false,
+            military: false
+          }
+        };
+
+        this.draftStats = {
+          playersCount: this.draftData.players ? this.draftData.players.size : 0,
+          alliancesCount: this.draftData.alliances ? this.draftData.alliances.size : 0,
+          planetsCount: this.draftData.planets ? this.draftData.planets.length : 0,
+          scoresCount: 0
+        };
+
+        this.endpointsTimestamp = draft.endpointsTimestamp || {};
+        this.lastSavedTimestamp = draft.updatedAt || null;
+      } else {
+        this.resetDraftState();
+      }
+      this.renderEndpointsCards();
+    } catch (err) {
+      console.warn('Could not load draft from storage:', err);
+    }
+  }
+
+  async persistCurrentDraft() {
+    const uniKey = this.getUniKey();
+    const draftPayload = {
+      community: this.currentCommunity,
+      uniNumber: this.currentUniNumber,
+      role: this.currentRole,
+      serverData: this.draftData.serverData,
+      alliances: this.draftData.alliances,
+      players: this.draftData.players,
+      planets: this.draftData.planets,
+      highscores: this.draftData.highscores,
+      endpointsTimestamp: this.endpointsTimestamp
+    };
+
+    try {
+      await this.storage.saveDraft(uniKey, draftPayload);
+      this.lastSavedTimestamp = Date.now();
+      this.updateDraftHeaderInfo();
+    } catch (err) {
+      console.error('Error auto-guardando borrador:', err);
+    }
+  }
+
+  formatTimestamp(ts) {
+    if (!ts) return null;
+    const d = new Date(ts);
+    return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   }
 
   getEndpointsConfig() {
@@ -74,7 +143,8 @@ export class UiIngestController {
         expectedRoot: 'serverData',
         url: `${base}/serverData.xml`,
         isReady: !!this.draftData.serverData,
-        summary: this.draftData.serverData ? `Vel: x${this.draftData.serverData.speed} · Gal: ${this.draftData.serverData.galaxies}` : null
+        summary: this.draftData.serverData ? `Vel: x${this.draftData.serverData.speed} · Gal: ${this.draftData.serverData.galaxies}` : null,
+        timestamp: this.endpointsTimestamp['serverData']
       },
       {
         id: 'players',
@@ -83,7 +153,8 @@ export class UiIngestController {
         expectedRoot: 'players',
         url: `${base}/players.xml`,
         isReady: !!this.draftData.players,
-        summary: this.draftData.players ? `${this.draftStats.playersCount.toLocaleString()} jugadores cargados` : null
+        summary: this.draftData.players ? `${this.draftStats.playersCount.toLocaleString()} jugadores cargados` : null,
+        timestamp: this.endpointsTimestamp['players']
       },
       {
         id: 'alliances',
@@ -92,7 +163,8 @@ export class UiIngestController {
         expectedRoot: 'alliances',
         url: `${base}/alliances.xml`,
         isReady: !!this.draftData.alliances,
-        summary: this.draftData.alliances ? `${this.draftStats.alliancesCount.toLocaleString()} alianzas cargadas` : null
+        summary: this.draftData.alliances ? `${this.draftStats.alliancesCount.toLocaleString()} alianzas cargadas` : null,
+        timestamp: this.endpointsTimestamp['alliances']
       },
       {
         id: 'universe',
@@ -101,7 +173,8 @@ export class UiIngestController {
         expectedRoot: 'universe',
         url: `${base}/universe.xml`,
         isReady: !!this.draftData.planets,
-        summary: this.draftData.planets ? `${this.draftStats.planetsCount.toLocaleString()} planetas procesados` : null
+        summary: this.draftData.planets ? `${this.draftStats.planetsCount.toLocaleString()} planetas procesados` : null,
+        timestamp: this.endpointsTimestamp['universe']
       },
       {
         id: 'highscore_total',
@@ -110,7 +183,8 @@ export class UiIngestController {
         expectedRoot: 'highscore',
         url: `${base}/highscore.xml?category=1&type=0`,
         isReady: this.draftData.highscores.total,
-        summary: this.draftData.highscores.total ? 'Puntuaciones aplicadas' : null
+        summary: this.draftData.highscores.total ? 'Puntuaciones aplicadas' : null,
+        timestamp: this.endpointsTimestamp['highscore_total']
       },
       {
         id: 'highscore_eco',
@@ -119,7 +193,8 @@ export class UiIngestController {
         expectedRoot: 'highscore',
         url: `${base}/highscore.xml?category=1&type=1`,
         isReady: this.draftData.highscores.economy,
-        summary: this.draftData.highscores.economy ? 'Economía aplicada' : null
+        summary: this.draftData.highscores.economy ? 'Economía aplicada' : null,
+        timestamp: this.endpointsTimestamp['highscore_eco']
       },
       {
         id: 'highscore_res',
@@ -128,7 +203,8 @@ export class UiIngestController {
         expectedRoot: 'highscore',
         url: `${base}/highscore.xml?category=1&type=2`,
         isReady: this.draftData.highscores.research,
-        summary: this.draftData.highscores.research ? 'Investigación aplicada' : null
+        summary: this.draftData.highscores.research ? 'Investigación aplicada' : null,
+        timestamp: this.endpointsTimestamp['highscore_res']
       },
       {
         id: 'highscore_mil',
@@ -137,7 +213,8 @@ export class UiIngestController {
         expectedRoot: 'highscore',
         url: `${base}/highscore.xml?category=1&type=3`,
         isReady: this.draftData.highscores.military,
-        summary: this.draftData.highscores.military ? 'Militar aplicado' : null
+        summary: this.draftData.highscores.military ? 'Militar aplicado' : null,
+        timestamp: this.endpointsTimestamp['highscore_mil']
       }
     ];
   }
@@ -146,13 +223,13 @@ export class UiIngestController {
     this.container.innerHTML = `
       <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 shadow-xl text-slate-200">
         <!-- Header & Target Selector -->
-        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-3">
           <div>
             <h2 class="text-base font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
               <span>🛡️</span> Ingesta Desacoplada Anti-CORS (Bypass Cloudflare)
             </h2>
             <p class="text-xs text-slate-400 mt-1">
-              Abre los XML directamente en tu navegador para evitar bloqueos HTTP 403, luego pega el texto o arrastra el archivo descargado.
+              Abre los XML directamente en tu navegador para evitar bloqueos HTTP 403. Al pegar o subir cada archivo se auto-guarda localmente en tiempo real.
             </p>
           </div>
 
@@ -178,6 +255,17 @@ export class UiIngestController {
           </div>
         </div>
 
+        <!-- Real-Time Auto-Save Banner -->
+        <div id="draftAutoSaveBanner" class="bg-slate-950/70 border border-slate-800 rounded px-3 py-2 mb-4 flex justify-between items-center text-xs">
+          <div class="flex items-center gap-2 text-slate-300">
+            <span class="text-emerald-400">💾</span>
+            <span id="draftStatusText">Auto-guardado activo: no perderás tus avances en caso de recarga o caída.</span>
+          </div>
+          <div id="draftLastSavedText" class="font-mono text-cyan-400 text-[11px]">
+            Sin datos guardados aún
+          </div>
+        </div>
+
         <!-- Endpoints Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6" id="endpointsGridContainer">
           <!-- Rendered dynamically -->
@@ -187,7 +275,7 @@ export class UiIngestController {
         <div class="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-800 bg-slate-950/60 p-3 rounded">
           <div class="text-xs text-slate-400 flex items-center gap-4" id="ingestStatusSummary">
             <span>Progreso del Servidor:</span>
-            <span class="font-mono text-cyan-400" id="ingestProgressCounter">0 / 8 completados</span>
+            <span class="font-mono text-cyan-400 font-bold" id="ingestProgressCounter">0 / 8 completados</span>
           </div>
 
           <div class="flex items-center gap-2">
@@ -204,10 +292,10 @@ export class UiIngestController {
         <div class="mt-6 pt-4 border-t border-slate-800">
           <div class="flex justify-between items-center mb-3">
             <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <span>🗄️</span> Universos Guardados en IndexedDB
+              <span>🗄️</span> Universos Finalizados en IndexedDB
             </h3>
             <button id="clearAllDbBtn" class="text-xs text-red-400 hover:text-red-300 underline">
-              Vaciar IndexedDB
+              Vaciar Todo IndexedDB
             </button>
           </div>
           <div id="savedUniversesList" class="flex flex-wrap gap-2 text-xs">
@@ -218,6 +306,17 @@ export class UiIngestController {
     `;
 
     this.renderEndpointsCards();
+  }
+
+  updateDraftHeaderInfo() {
+    const bannerText = this.container.querySelector('#draftLastSavedText');
+    if (bannerText) {
+      if (this.lastSavedTimestamp) {
+        bannerText.textContent = `Último auto-guardado: ${this.formatTimestamp(this.lastSavedTimestamp)}`;
+      } else {
+        bannerText.textContent = 'Sin datos guardados aún';
+      }
+    }
   }
 
   renderEndpointsCards() {
@@ -233,6 +332,8 @@ export class UiIngestController {
       const statusBadge = ep.isReady
         ? `<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] px-2 py-0.5 rounded-full font-mono flex items-center gap-1">✔ Listo</span>`
         : `<span class="bg-slate-800 text-slate-400 border border-slate-700 text-[10px] px-2 py-0.5 rounded-full font-mono">Pendiente</span>`;
+
+      const timeFormatted = ep.timestamp ? this.formatTimestamp(ep.timestamp) : null;
 
       return `
         <div class="bg-slate-950/80 border ${ep.isReady ? 'border-emerald-500/30' : 'border-slate-800'} rounded-md p-3 flex flex-col justify-between gap-3 text-xs" data-ep-id="${ep.id}">
@@ -262,13 +363,16 @@ export class UiIngestController {
 
           <!-- Ingestion Dropzone & Paste Section -->
           <div class="border-t border-slate-800/80 pt-2 flex flex-col gap-2">
-            ${ep.summary ? `<div class="text-[11px] text-emerald-400 font-mono">✔ ${ep.summary}</div>` : ''}
+            <div class="flex justify-between items-center">
+              ${ep.summary ? `<span class="text-[11px] text-emerald-400 font-mono">✔ ${ep.summary}</span>` : '<span class="text-[11px] text-slate-500">Esperando datos...</span>'}
+              ${timeFormatted ? `<span class="text-[10px] text-slate-400 font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">🕒 Cargado: ${timeFormatted}</span>` : ''}
+            </div>
 
             <div class="flex gap-2">
-              <button type="button" class="paste-clip-btn bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/50 px-2.5 py-1 rounded text-[11px] transition flex-1" data-ep-id="${ep.id}" data-root="${ep.expectedRoot}">
+              <button type="button" class="paste-clip-btn bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/50 px-2.5 py-1 rounded text-[11px] transition flex-1 font-semibold" data-ep-id="${ep.id}" data-root="${ep.expectedRoot}">
                 📄 Pegar desde Portapapeles
               </button>
-              <label class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1 rounded text-[11px] cursor-pointer transition text-center">
+              <label class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-2.5 py-1 rounded text-[11px] cursor-pointer transition text-center font-semibold">
                 📁 Subir .XML
                 <input type="file" accept=".xml" class="hidden file-input" data-ep-id="${ep.id}" data-root="${ep.expectedRoot}">
               </label>
@@ -294,16 +398,17 @@ export class UiIngestController {
     const counter = this.container.querySelector('#ingestProgressCounter');
     if (counter) counter.textContent = `${readyCount} / ${endpoints.length} completados`;
 
+    this.updateDraftHeaderInfo();
+
     const saveBtn = this.container.querySelector('#saveUniverseToDbBtn');
     if (saveBtn) {
-      // Must have at least players and serverData or universe to be considered viable
       saveBtn.disabled = !this.draftData.players || !this.draftData.serverData || !this.draftData.planets;
     }
   }
 
   bindEvents() {
-    // Update target
-    this.container.addEventListener('click', (e) => {
+    this.container.addEventListener('click', async (e) => {
+      // Update target
       if (e.target.id === 'updateIngestTargetBtn') {
         const comm = this.container.querySelector('#ingestCommInput').value.trim().toLowerCase();
         const uniNum = parseInt(this.container.querySelector('#ingestUniInput').value.trim(), 10);
@@ -313,8 +418,7 @@ export class UiIngestController {
           this.currentCommunity = comm;
           this.currentUniNumber = uniNum;
           this.currentRole = role;
-          this.resetDraftState();
-          this.renderEndpointsCards();
+          await this.loadDraftForCurrentTarget();
         }
       }
 
@@ -344,7 +448,7 @@ export class UiIngestController {
         const root = applyBtn.dataset.root;
         const box = this.container.querySelector(`#manual_box_${epId}`);
         const text = box.querySelector('textarea').value;
-        this.processXmlInput(epId, root, text);
+        await this.processXmlInput(epId, root, text);
       }
 
       // Paste from clipboard button
@@ -353,15 +457,14 @@ export class UiIngestController {
         const epId = pasteBtn.dataset.epId;
         const root = pasteBtn.dataset.root;
         navigator.clipboard.readText()
-          .then(clipText => {
+          .then(async (clipText) => {
             if (!clipText || !clipText.trim()) {
               alert('El portapapeles está vacío.');
               return;
             }
-            this.processXmlInput(epId, root, clipText);
+            await this.processXmlInput(epId, root, clipText);
           })
           .catch(() => {
-            // Fallback: prompt or show manual textarea
             const box = this.container.querySelector(`#manual_box_${epId}`);
             if (box) {
               box.classList.remove('hidden');
@@ -373,12 +476,14 @@ export class UiIngestController {
 
       // Save Universe
       if (e.target.id === 'saveUniverseToDbBtn') {
-        this.finalizeAndSaveUniverse();
+        await this.finalizeAndSaveUniverse();
       }
 
       // Reset Draft
       if (e.target.id === 'resetDraftBtn') {
-        if (confirm('¿Deseas descartar los XML ingresados para este servidor?')) {
+        if (confirm('¿Deseas descartar el borrador actual guardado para este servidor?')) {
+          const uniKey = this.getUniKey();
+          await this.storage.deleteDraft(uniKey);
           this.resetDraftState();
           this.renderEndpointsCards();
         }
@@ -386,11 +491,12 @@ export class UiIngestController {
 
       // Clear all DB
       if (e.target.id === 'clearAllDbBtn') {
-        if (confirm('¿Vaciar todos los universos almacenados en IndexedDB?')) {
-          this.storage.clearAll().then(() => {
-            this.refreshSavedUniversesList();
-            this.onUniverseDeleted('all');
-          });
+        if (confirm('¿Vaciar todos los universos y borradores almacenados en IndexedDB?')) {
+          await this.storage.clearAll();
+          this.resetDraftState();
+          this.renderEndpointsCards();
+          this.refreshSavedUniversesList();
+          this.onUniverseDeleted('all');
         }
       }
     });
@@ -404,7 +510,7 @@ export class UiIngestController {
         const root = fileInput.dataset.root;
         try {
           const text = await XmlParser.readFileAsText(file);
-          this.processXmlInput(epId, root, text);
+          await this.processXmlInput(epId, root, text);
         } catch (err) {
           this.showEndpointError(epId, err.message);
         }
@@ -439,7 +545,7 @@ export class UiIngestController {
           const root = card.querySelector('.file-input')?.dataset.root;
           try {
             const text = await XmlParser.readFileAsText(file);
-            this.processXmlInput(epId, root, text);
+            await this.processXmlInput(epId, root, text);
           } catch (err) {
             this.showEndpointError(epId, err.message);
           }
@@ -485,6 +591,13 @@ export class UiIngestController {
         this.draftStats.scoresCount += appliedCount;
       }
 
+      // 3. Record timestamp for this endpoint
+      this.endpointsTimestamp[epId] = Date.now();
+
+      // 4. Auto-save draft incrementally to IndexedDB
+      await this.persistCurrentDraft();
+
+      // 5. Update UI
       this.renderEndpointsCards();
     } catch (err) {
       this.showEndpointError(epId, err.message);
@@ -534,6 +647,9 @@ export class UiIngestController {
 
     try {
       await this.storage.saveUniverse(payload);
+      // Remove draft since it has been finalized
+      await this.storage.deleteDraft(uniKey);
+
       alert(`¡Universo ${payload.community.toUpperCase()} #${payload.uniNumber} guardado en IndexedDB con éxito!`);
       this.refreshSavedUniversesList();
       this.onUniverseReady(payload);
@@ -549,7 +665,7 @@ export class UiIngestController {
     try {
       const saved = await this.storage.getAllUniverses();
       if (saved.length === 0) {
-        listContainer.innerHTML = '<span class="text-slate-500 italic">No hay universos guardados aún en IndexedDB.</span>';
+        listContainer.innerHTML = '<span class="text-slate-500 italic">No hay universos finalizados aún en IndexedDB.</span>';
         return;
       }
 
@@ -558,18 +674,20 @@ export class UiIngestController {
           ? '<span class="text-cyan-400 font-bold">[★ Destino]</span>'
           : '<span class="text-amber-400 font-bold">[Éxodo]</span>';
 
+        const dateStr = u.savedAt ? this.formatTimestamp(u.savedAt) : 'Desconocida';
+
         return `
           <div class="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 flex items-center gap-2">
             <span>${roleBadge} ${u.community.toUpperCase()} #${u.uniNumber} (${u.serverData?.name || 'Uni'})</span>
-            <span class="text-slate-500 font-mono">(${u.players.size} jug. · ${u.planets.length} plan.)</span>
+            <span class="text-slate-400 font-mono text-[11px]">${u.players.size.toLocaleString()} jug. · ${u.planets.length.toLocaleString()} plan.</span>
+            <span class="text-slate-500 font-mono text-[10px]">(${dateStr})</span>
             <button class="delete-saved-uni-btn text-red-400 hover:text-red-300 ml-1" data-unikey="${u.uniKey}">✖</button>
           </div>
         `;
       }).join('');
 
-      // Delete buttons
       listContainer.querySelectorAll('.delete-saved-uni-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
+        btn.addEventListener('click', async () => {
           const key = btn.dataset.unikey;
           if (confirm(`¿Eliminar universo ${key} de IndexedDB?`)) {
             await this.storage.deleteUniverse(key);

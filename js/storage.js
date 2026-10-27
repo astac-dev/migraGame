@@ -1,11 +1,12 @@
 /**
  * IndexedDB Storage Layer for OGame Universe Merger
- * Handles persistent client-side storage of parsed universe datasets.
+ * Handles persistent client-side storage of parsed universe datasets and real-time drafts.
  */
 
 const DB_NAME = 'OGameMergerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'universes';
+const DRAFT_STORE_NAME = 'drafts';
 
 export class UniverseStorage {
   constructor() {
@@ -24,6 +25,9 @@ export class UniverseStorage {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: 'uniKey' });
         }
+        if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) {
+          db.createObjectStore(DRAFT_STORE_NAME, { keyPath: 'uniKey' });
+        }
       };
 
       request.onsuccess = (event) => {
@@ -38,12 +42,95 @@ export class UniverseStorage {
   }
 
   /**
-   * Save or update a parsed universe
+   * Save or update an incremental draft
+   */
+  async saveDraft(uniKey, draftData) {
+    await this.initPromise;
+
+    const serializable = {
+      uniKey,
+      community: draftData.community,
+      uniNumber: draftData.uniNumber,
+      role: draftData.role || 'exodus',
+      updatedAt: Date.now(),
+      endpointsTimestamp: draftData.endpointsTimestamp || {},
+      serverData: draftData.serverData,
+      alliances: draftData.alliances ? Array.from(draftData.alliances.entries()) : null,
+      players: draftData.players ? Array.from(draftData.players.entries()) : null,
+      planets: draftData.planets || null,
+      highscores: draftData.highscores || {}
+    };
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([DRAFT_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(DRAFT_STORE_NAME);
+      const req = store.put(serializable);
+
+      req.onsuccess = () => resolve(true);
+      req.onerror = (e) => reject(new Error(`Fallo guardando borrador en IndexedDB: ${e.target.error}`));
+    });
+  }
+
+  /**
+   * Retrieve incremental draft by universe key
+   */
+  async getDraft(uniKey) {
+    await this.initPromise;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([DRAFT_STORE_NAME], 'readonly');
+      const store = transaction.objectStore(DRAFT_STORE_NAME);
+      const req = store.get(uniKey);
+
+      req.onsuccess = () => {
+        const data = req.result;
+        if (!data) {
+          resolve(null);
+          return;
+        }
+
+        const hydrated = {
+          uniKey: data.uniKey,
+          community: data.community,
+          uniNumber: data.uniNumber,
+          role: data.role || 'exodus',
+          updatedAt: data.updatedAt,
+          endpointsTimestamp: data.endpointsTimestamp || {},
+          serverData: data.serverData,
+          alliances: data.alliances ? new Map(data.alliances) : null,
+          players: data.players ? new Map(data.players) : null,
+          planets: data.planets || null,
+          highscores: data.highscores || {}
+        };
+        resolve(hydrated);
+      };
+
+      req.onerror = (e) => reject(new Error(`Fallo recuperando borrador: ${e.target.error}`));
+    });
+  }
+
+  /**
+   * Delete an incremental draft
+   */
+  async deleteDraft(uniKey) {
+    await this.initPromise;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([DRAFT_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(DRAFT_STORE_NAME);
+      const req = store.delete(uniKey);
+
+      req.onsuccess = () => resolve(true);
+      req.onerror = (e) => reject(new Error(`Fallo eliminando borrador: ${e.target.error}`));
+    });
+  }
+
+  /**
+   * Save or update a completed parsed universe
    */
   async saveUniverse(universeData) {
     await this.initPromise;
 
-    // Convert Maps to plain objects/arrays for structured clone compatibility
     const serializable = {
       uniKey: universeData.uniKey,
       community: universeData.community,
@@ -84,7 +171,6 @@ export class UniverseStorage {
           return;
         }
 
-        // Rehydrate Maps
         const hydrated = {
           uniKey: data.uniKey,
           community: data.community,
@@ -150,18 +236,20 @@ export class UniverseStorage {
   }
 
   /**
-   * Clear all stored universes
+   * Clear all stored universes and drafts
    */
   async clearAll() {
     await this.initPromise;
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+      const transaction = this.db.transaction([STORE_NAME, DRAFT_STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      const req = store.clear();
+      const draftStore = transaction.objectStore(DRAFT_STORE_NAME);
+      store.clear();
+      draftStore.clear();
 
-      req.onsuccess = () => resolve(true);
-      req.onerror = (e) => reject(new Error(`Fallo limpiando base de datos: ${e.target.error}`));
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = (e) => reject(new Error(`Fallo limpiando base de datos: ${e.target.error}`));
     });
   }
 }
