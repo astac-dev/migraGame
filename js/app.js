@@ -836,6 +836,18 @@ class OgameMergerApp {
         const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
         const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem; margin-left: 0.35rem;">${speedLight.label}</span>`;
 
+        let statusPills = '';
+        if (owner?.status?.includes('v')) statusPills += '<span class="player-status-tag tag-v">v</span>';
+        if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">i</span>';
+        if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">renombrado</span>';
+
+        // Recalculated rankings in merged universe
+        const ranks = owner?.mergedRanks || {};
+        const rankTotalStr = ranks.total ? `#${ranks.total.toLocaleString()}` : '-';
+        const rankMilStr = ranks.military ? `#${ranks.military.toLocaleString()}` : '-';
+        const rankEcoStr = ranks.economy ? `#${ranks.economy.toLocaleString()}` : '-';
+        const rankResStr = ranks.research ? `#${ranks.research.toLocaleString()}` : '-';
+
         let stateClass = '';
         let badgeHtml = '';
 
@@ -861,13 +873,37 @@ class OgameMergerApp {
             <span>🪐</span> ${this.escapeHtml(pl.name)}
           </div>
           <div class="slot-player-info">
-            <div>Comandante: <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong></div>
-            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;">
+              <span>Comandante:</span>
+              <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong>
+              ${statusPills}
+            </div>
+            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; margin-top: 0.15rem;">
               <span>${ownerUni}</span>
               ${speedPill}
             </div>
           </div>
           <div>${badgeHtml}</div>
+
+          <!-- Clasificación Unificada del Jugador -->
+          <div class="slot-ranks-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.3rem; font-family: var(--font-mono); font-size: 0.72rem; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación General / Total">
+              <span style="color: var(--text-muted);">🏆 Total:</span>
+              <span style="color: #fff; font-weight: 700;">${rankTotalStr}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación Militar / Flota">
+              <span style="color: var(--accent-orange);">⚔️ Flota:</span>
+              <span style="color: var(--accent-orange); font-weight: 700;">${rankMilStr}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación de Economía">
+              <span style="color: #fbbf24;">🪙 Eco:</span>
+              <span style="color: #fbbf24; font-weight: 700;">${rankEcoStr}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación de Investigación">
+              <span style="color: var(--accent-cyan);">🔬 Inv:</span>
+              <span style="color: var(--accent-cyan); font-weight: 700;">${rankResStr}</span>
+            </div>
+          </div>
         `;
       }
 
