@@ -188,13 +188,19 @@ export class OgameApiClient {
   async parseUniverseDataset(uniKey, community, uniNumber, role, xmls) {
     // 1. Server Data
     const serverNode = xmls.serverData.querySelector('serverData');
+    const speedFleetWar = Number(serverNode?.querySelector('speedFleetWar')?.textContent || 0);
+    const speedFleet = Number(serverNode?.querySelector('speedFleet')?.textContent || 1);
+    const speed = Number(serverNode?.querySelector('speed')?.textContent || 1);
+    const effectiveFleetWar = speedFleetWar > 0 ? speedFleetWar : (speedFleet > 0 ? speedFleet : speed);
+
     const serverData = {
       name: serverNode?.querySelector('name')?.textContent || `Uni ${uniNumber}`,
       number: uniNumber,
       community: community,
       role: role, // 'destination' | 'exodus'
-      speed: Number(serverNode?.querySelector('speed')?.textContent || 1),
-      speedFleet: Number(serverNode?.querySelector('speedFleet')?.textContent || 1),
+      speed,
+      speedFleet,
+      speedFleetWar: effectiveFleetWar,
       galaxies: Number(serverNode?.querySelector('galaxies')?.textContent || 9),
       systems: Number(serverNode?.querySelector('systems')?.textContent || 499),
       acs: serverNode?.querySelector('acs')?.textContent === '1',

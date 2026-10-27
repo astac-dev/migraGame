@@ -704,3 +704,55 @@ body {
   font-weight: 700;
   color: var(--accent-cyan);
 }
+
+/* Semáforo de Velocidad de Flota */
+.badge-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-speed::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.badge-speed-green {
+  background: rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+  border: 1px solid rgba(0, 255, 136, 0.4);
+}
+.badge-speed-green::before {
+  background: #00ff88;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.badge-speed-yellow {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+.badge-speed-yellow::before {
+  background: #fbbf24;
+  box-shadow: 0 0 6px #fbbf24;
+}
+
+.badge-speed-red {
+  background: rgba(255, 51, 102, 0.18);
+  color: #ff3366;
+  border: 1px solid rgba(255, 51, 102, 0.4);
+}
+.badge-speed-red::before {
+  background: #ff3366;
+  box-shadow: 0 0 6px #ff3366;
+}
+

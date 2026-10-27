@@ -3,7 +3,11 @@
  * Handles client-side simulation of universe fusion:
  * - Entity deduplication (players, alliances)
  * - Galactic coordinate collision detection and closest-slot relocation (Host Destination priority)
- * - Unified highscore recalculation across all 8 official highscore types (Total, Eco, Res, Mil, MilLost, MilBuilt, MilDestroyed, Honor)
+ * - Traffic light color scaling based on origin universe military / fleet war speed:
+ *     * Verde: Universo x1
+ *     * Amarillo: Universos x2 a x4 (y x5)
+ *     * Rojo: Universos x6 en adelante
+ * - Unified highscore recalculation across all 8 official highscore types
  * - Global density and analytical matrix calculation
  */
 
@@ -13,6 +17,47 @@ export class UniverseMergeEngine {
     this.maxGalaxies = 9;
     this.maxSystems = 499;
     this.slotsPerSystem = 15;
+  }
+
+  /**
+   * Semáforo de velocidad militar o de guerra:
+   * - Verde: x1
+   * - Amarillo: x2 a x4 (y x5)
+   * - Rojo: x6 en adelante
+   */
+  static getSpeedTrafficLight(speedFleetWar) {
+    const speed = Number(speedFleetWar) || 1;
+    if (speed <= 1) {
+      return {
+        category: 'green',
+        speed,
+        label: `x${speed}`,
+        badgeClass: 'badge-speed-green',
+        color: '#00ff88',
+        text: 'x1 (Verde)',
+        desc: 'Velocidad Militar x1 (Estándar)'
+      };
+    } else if (speed <= 5) {
+      return {
+        category: 'yellow',
+        speed,
+        label: `x${speed}`,
+        badgeClass: 'badge-speed-yellow',
+        color: '#fbbf24',
+        text: 'x2-x4 (Amarillo)',
+        desc: 'Velocidad Militar x2 a x4 (Media)'
+      };
+    } else {
+      return {
+        category: 'red',
+        speed,
+        label: `x${speed}`,
+        badgeClass: 'badge-speed-red',
+        color: '#ff3366',
+        text: 'x6+ (Rojo)',
+        desc: 'Velocidad Militar x6+ (Rápida)'
+      };
+    }
   }
 
   executeMerge() {
@@ -36,10 +81,15 @@ export class UniverseMergeEngine {
 
     // Aggregate entities
     for (const u of this.universes) {
+      const warSpeed = u.serverData?.speedFleetWar || u.serverData?.speedFleet || u.serverData?.speed || 1;
+      const speedLight = UniverseMergeEngine.getSpeedTrafficLight(warSpeed);
+
       for (const [id, player] of u.players.entries()) {
         mergedPlayers.set(player.id, {
           ...player,
           role: u.role || 'exodus',
+          speedFleetWar: warSpeed,
+          speedTrafficLight: speedLight,
           mergedRanks: {},
           deltaRanks: {},
           collisionName: false,
@@ -51,6 +101,8 @@ export class UniverseMergeEngine {
         mergedAlliances.set(alliance.id, {
           ...alliance,
           role: u.role || 'exodus',
+          speedFleetWar: warSpeed,
+          speedTrafficLight: speedLight,
           collisionTag: false,
           displayTag: alliance.tag
         });
@@ -60,6 +112,8 @@ export class UniverseMergeEngine {
         rawPlanets.push({
           ...planet,
           role: u.role || 'exodus',
+          speedFleetWar: warSpeed,
+          speedTrafficLight: speedLight,
           hasCollision: false,
           retained: false,
           relocated: false,
@@ -125,7 +179,6 @@ export class UniverseMergeEngine {
 
     for (const [name, list] of nameMap.entries()) {
       if (list.length > 1) {
-        // Priority rule: Destination server resident retains name first; if same role, highest total score
         list.sort((a, b) => {
           if (a.role === 'destination' && b.role !== 'destination') return -1;
           if (b.role === 'destination' && a.role !== 'destination') return 1;
@@ -193,18 +246,11 @@ export class UniverseMergeEngine {
     return collisions;
   }
 
-  /**
-   * Resolves coordinate collisions.
-   * Priority rule: Destination server native planet retains position.
-   * If both are exodus or both are destination, higher total score retains position.
-   * Displaced planets relocate to the closest vacant slot within same system or galaxy.
-   */
   resolveCoordinateCollisions(rawPlanets, playersMap) {
     const coordMap = new Map();
     const coordinateCollisions = [];
     const occupiedSlots = new Set();
 
-    // Group by coordinates
     for (const pl of rawPlanets) {
       const coordKey = `${pl.coords.g}:${pl.coords.s}:${pl.coords.p}`;
       if (!coordMap.has(coordKey)) {
@@ -215,7 +261,6 @@ export class UniverseMergeEngine {
 
     const finalPlanets = [];
 
-    // Phase 1: Identify uncontested slots & winners of contested slots
     for (const [coordKey, list] of coordMap.entries()) {
       if (list.length === 1) {
         const planet = list[0];
@@ -223,7 +268,6 @@ export class UniverseMergeEngine {
         occupiedSlots.add(coordKey);
         finalPlanets.push(planet);
       } else {
-        // Sort contestants: Host destination player first, otherwise total score descending
         list.sort((a, b) => {
           const isDestA = a.role === 'destination';
           const isDestB = b.role === 'destination';
@@ -243,7 +287,6 @@ export class UniverseMergeEngine {
       }
     }
 
-    // Phase 2: Relocate displaced contestants to nearest vacant slot
     for (const [coordKey, list] of coordMap.entries()) {
       if (list.length > 1) {
         const winner = list[0];
@@ -278,6 +321,8 @@ export class UniverseMergeEngine {
               name: displacedPlayer?.displayName || displacedPlayer?.name || 'Desconocido',
               uniKey: displaced.uniKey,
               role: displaced.role,
+              speedFleetWar: displaced.speedFleetWar,
+              speedTrafficLight: displaced.speedTrafficLight,
               score: displacedPlayer?.scores.total || 0
             },
             retainedPlayer: {
@@ -285,6 +330,8 @@ export class UniverseMergeEngine {
               name: winnerPlayer?.displayName || winnerPlayer?.name || 'Desconocido',
               uniKey: winner.uniKey,
               role: winner.role,
+              speedFleetWar: winner.speedFleetWar,
+              speedTrafficLight: winner.speedTrafficLight,
               score: winnerPlayer?.scores.total || 0
             }
           });
@@ -299,14 +346,7 @@ export class UniverseMergeEngine {
     };
   }
 
-  /**
-   * Search algorithm for closest available slot:
-   * 1. Same system: search outward from original slot p: p, p-1, p+1, p-2... in 1..15
-   * 2. Adjacent systems: s+1, s-1, s+2, s-2... in 1..maxSystems
-   * 3. Adjacent galaxies: g+1, g-1... in 1..maxGalaxies
-   */
   findNearestVacantSlot(startG, startS, startP, occupiedSlots) {
-    // 1. Same Galaxy, Search radially outward from start system
     for (let sDist = 0; sDist < this.maxSystems; sDist++) {
       const candidateSystems = sDist === 0 ? [startS] : [startS + sDist, startS - sDist];
 
@@ -323,7 +363,6 @@ export class UniverseMergeEngine {
       }
     }
 
-    // 2. Adjacent galaxies
     for (let gDist = 1; gDist < this.maxGalaxies; gDist++) {
       const candidateGalaxies = [startG + gDist, startG - gDist];
 
@@ -355,9 +394,6 @@ export class UniverseMergeEngine {
     return slots;
   }
 
-  /**
-   * Recalculates highscores across all merged players and computes Delta Ranks for all 8 categories
-   */
   recalculateHighscores(playersMap) {
     const categories = [
       'total',
@@ -401,6 +437,8 @@ export class UniverseMergeEngine {
           allianceId: player.allianceId,
           uniKey: player.uniKey,
           role: player.role,
+          speedFleetWar: player.speedFleetWar,
+          speedTrafficLight: player.speedTrafficLight,
           status: player.status,
           score: player.scores[cat] || 0,
           ships: cat === 'military' ? (player.ships || 0) : undefined,
@@ -422,10 +460,21 @@ export class UniverseMergeEngine {
     let totalPoints = 0;
     let totalShips = 0;
 
+    const speedCounts = {
+      green: 0,  // x1
+      yellow: 0, // x2 - x4 (x5)
+      red: 0     // x6+
+    };
+
     for (const p of playersMap.values()) {
       totalPlayers++;
       totalPoints += p.scores.total || 0;
       totalShips += p.ships || 0;
+
+      const cat = p.speedTrafficLight?.category || 'green';
+      if (speedCounts[cat] !== undefined) {
+        speedCounts[cat]++;
+      }
 
       const st = p.status || '';
       if (st.includes('v')) {
@@ -472,6 +521,7 @@ export class UniverseMergeEngine {
       inactivePlayers,
       totalPoints,
       totalShips,
+      speedCounts,
       totalPlanets: planets.length,
       totalMoons,
       totalCollisions: coordCollisions.length,

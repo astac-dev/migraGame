@@ -197,6 +197,15 @@
             <span id="statTotalShips" class="stat-value">0</span>
             <span class="stat-subtext">Naves en circulación</span>
           </div>
+          <div class="stat-card">
+            <span class="stat-label">Semáforo Vel. Guerra</span>
+            <div class="flex items-center gap-1.5 mt-2 flex-wrap">
+              <span class="badge-speed badge-speed-green" id="statSpeedGreen">x1: 0</span>
+              <span class="badge-speed badge-speed-yellow" id="statSpeedYellow">x2-4: 0</span>
+              <span class="badge-speed badge-speed-red" id="statSpeedRed">x6+: 0</span>
+            </div>
+            <span class="stat-subtext mt-1">Jugadores por vel. de origen</span>
+          </div>
         </div>
 
         <div class="bg-slate-950 p-4 rounded-md border border-slate-800 text-xs">
@@ -228,37 +237,48 @@
             </select>
           </div>
 
-          <div class="input-field max-w-[200px]">
-            <label for="hsUniverseFilter">Filtrar por Universo</label>
-            <select id="hsUniverseFilter">
-              <option value="all">Todos los Universos</option>
-            </select>
+            <div class="input-field max-w-[200px]">
+              <label for="hsUniverseFilter">Filtrar por Universo</label>
+              <select id="hsUniverseFilter">
+                <option value="all">Todos los Universos</option>
+              </select>
+            </div>
+
+            <div class="input-field max-w-[190px]">
+              <label for="hsSpeedFilter">Semáforo Vel. Guerra</label>
+              <select id="hsSpeedFilter">
+                <option value="all">Todas las Velocidades</option>
+                <option value="green">🟢 Verde (x1 Flota)</option>
+                <option value="yellow">🟡 Amarillo (x2 a x4)</option>
+                <option value="red">🔴 Rojo (x6+ Flota)</option>
+              </select>
+            </div>
+
+            <div class="input-field flex-1">
+              <label for="hsSearchInput">Buscar Jugador / Alianza</label>
+              <input type="text" id="hsSearchInput" class="search-input" placeholder="Escribe para buscar...">
+            </div>
           </div>
 
-          <div class="input-field flex-1">
-            <label for="hsSearchInput">Buscar Jugador / Alianza</label>
-            <input type="text" id="hsSearchInput" class="search-input" placeholder="Escribe para buscar...">
+          <div class="table-wrapper">
+            <table class="data-table" id="highscoreTable">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">Rank</th>
+                  <th style="width: 80px;">Delta</th>
+                  <th>Jugador</th>
+                  <th>Alianza</th>
+                  <th style="width: 120px;">Uni Origen</th>
+                  <th style="width: 130px;">Vel. Guerra</th>
+                  <th style="text-align: right; width: 140px;">Puntos</th>
+                  <th style="text-align: right; width: 100px;">Planetas</th>
+                </tr>
+              </thead>
+              <tbody id="highscoreTableBody">
+                <!-- Populated by app.js -->
+              </tbody>
+            </table>
           </div>
-        </div>
-
-        <div class="table-wrapper">
-          <table class="data-table" id="highscoreTable">
-            <thead>
-              <tr>
-                <th style="width: 70px;">Rank</th>
-                <th style="width: 80px;">Delta</th>
-                <th>Jugador</th>
-                <th>Alianza</th>
-                <th style="width: 120px;">Uni Origen</th>
-                <th style="text-align: right; width: 140px;">Puntos</th>
-                <th style="text-align: right; width: 100px;">Planetas</th>
-              </tr>
-            </thead>
-            <tbody id="highscoreTableBody">
-              <!-- Populated by app.js -->
-            </tbody>
-          </table>
-        </div>
 
         <div class="pagination-controls">
           <span id="hsPaginationInfo">Mostrando 0-0 de 0</span>

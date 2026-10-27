@@ -1,0 +1,5 @@
+# Ignorar exports locales y temporales
+ogame_merged_*.json
+*.log
+.DS_Store
+Thumbs.db

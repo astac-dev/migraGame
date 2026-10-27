@@ -82,6 +82,7 @@ class OgameMergerApp {
     this.hsState = {
       category: 'total',
       filterUni: 'all',
+      filterSpeed: 'all',
       query: '',
       page: 1,
       pageSize: 50
@@ -152,10 +153,14 @@ class OgameMergerApp {
       statOccupancy: document.getElementById('statOccupancy'),
       statOccupancySlots: document.getElementById('statOccupancySlots'),
       statTotalShips: document.getElementById('statTotalShips'),
+      statSpeedGreen: document.getElementById('statSpeedGreen'),
+      statSpeedYellow: document.getElementById('statSpeedYellow'),
+      statSpeedRed: document.getElementById('statSpeedRed'),
 
       // Tab 2: Highscores
       hsCategorySelect: document.getElementById('hsCategorySelect'),
       hsUniverseFilter: document.getElementById('hsUniverseFilter'),
+      hsSpeedFilter: document.getElementById('hsSpeedFilter'),
       hsSearchInput: document.getElementById('hsSearchInput'),
       highscoreTableBody: document.getElementById('highscoreTableBody'),
       hsPaginationInfo: document.getElementById('hsPaginationInfo'),
@@ -329,6 +334,14 @@ class OgameMergerApp {
       this.hsState.page = 1;
       this.renderHighscoreTable();
     });
+
+    if (this.dom.hsSpeedFilter) {
+      this.dom.hsSpeedFilter.addEventListener('change', (e) => {
+        this.hsState.filterSpeed = e.target.value;
+        this.hsState.page = 1;
+        this.renderHighscoreTable();
+      });
+    }
 
     let debounceTimer;
     this.dom.hsSearchInput.addEventListener('input', (e) => {
@@ -671,6 +684,11 @@ class OgameMergerApp {
 
     this.dom.statTotalShips.textContent = a.totalShips.toLocaleString();
 
+    const sc = a.speedCounts || { green: 0, yellow: 0, red: 0 };
+    if (this.dom.statSpeedGreen) this.dom.statSpeedGreen.textContent = `x1: ${sc.green.toLocaleString()}`;
+    if (this.dom.statSpeedYellow) this.dom.statSpeedYellow.textContent = `x2-4: ${sc.yellow.toLocaleString()}`;
+    if (this.dom.statSpeedRed) this.dom.statSpeedRed.textContent = `x6+: ${sc.red.toLocaleString()}`;
+
     if (a.totalCollisions > 0 || a.totalNickCollisions > 0) {
       this.dom.conflictsBadge.textContent = (a.totalCollisions + a.totalNickCollisions).toLocaleString();
       this.dom.conflictsBadge.style.display = 'inline-block';
@@ -699,6 +717,9 @@ class OgameMergerApp {
     let filtered = rawList;
     if (this.hsState.filterUni !== 'all') {
       filtered = filtered.filter(p => p.uniKey === this.hsState.filterUni);
+    }
+    if (this.hsState.filterSpeed !== 'all') {
+      filtered = filtered.filter(p => p.speedTrafficLight?.category === this.hsState.filterSpeed);
     }
     if (this.hsState.query) {
       filtered = filtered.filter(p => {
@@ -753,6 +774,9 @@ class OgameMergerApp {
         : '';
       const uniLabel = item.uniKey ? `${roleBadge}${item.uniKey.replace('_', ' #').toUpperCase()}` : '-';
 
+      const speedLight = item.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+      const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" title="${speedLight.desc || speedLight.text}">${speedLight.label} Flota</span>`;
+
       tr.innerHTML = `
         <td class="mono-cell" style="font-weight: 700; color: #fff;">${item.rank}</td>
         <td>${deltaHtml}</td>
@@ -762,6 +786,7 @@ class OgameMergerApp {
         </td>
         <td><span style="color: var(--accent-cyan); font-family: var(--font-mono);">${this.escapeHtml(allianceName)}</span></td>
         <td class="mono-cell" style="font-size: 0.8rem; color: var(--text-muted);">${uniLabel}</td>
+        <td>${speedPill}</td>
         <td class="mono-cell" style="text-align: right; font-weight: 600; color: var(--accent-orange);">${item.score.toLocaleString()}</td>
         <td class="mono-cell" style="text-align: right; color: var(--text-muted);">${item.planetsCount}</td>
       `;
@@ -808,6 +833,9 @@ class OgameMergerApp {
         const roleTag = pl.role === 'destination' ? '★ Destino' : 'Éxodo';
         const ownerUni = `${roleTag} ${pl.uniKey.replace('_', ' #').toUpperCase()}`;
 
+        const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+        const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem; margin-left: 0.35rem;">${speedLight.label}</span>`;
+
         let stateClass = '';
         let badgeHtml = '';
 
@@ -834,7 +862,10 @@ class OgameMergerApp {
           </div>
           <div class="slot-player-info">
             <div>Comandante: <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong></div>
-            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted);">${ownerUni}</div>
+            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center;">
+              <span>${ownerUni}</span>
+              ${speedPill}
+            </div>
           </div>
           <div>${badgeHtml}</div>
         `;
@@ -862,15 +893,22 @@ class OgameMergerApp {
         const roleA = c.retainedPlayer.role === 'destination' ? '[★ Anfitrión]' : '[Éxodo]';
         const roleB = c.displacedPlayer.role === 'destination' ? '[★ Anfitrión]' : '[Éxodo]';
 
+        const speedLightA = c.retainedPlayer.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+        const speedLightB = c.displacedPlayer.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+        const pillA = `<span class="badge-speed ${speedLightA.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem;">${speedLightA.label} Flota</span>`;
+        const pillB = `<span class="badge-speed ${speedLightB.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem;">${speedLightB.label} Flota</span>`;
+
         item.innerHTML = `
           <div>
-            <div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
               <span class="conflict-coords">[${c.originalCoords}]</span>
-              <strong style="color: #fff; margin-left: 0.4rem;">${this.escapeHtml(c.planetName)}</strong>
+              <strong style="color: #fff;">${this.escapeHtml(c.planetName)}</strong>
               <span style="color: var(--text-muted); font-size: 0.8rem;">(Jugador: ${this.escapeHtml(c.displacedPlayer.name)} · ${roleB} ${c.displacedPlayer.uniKey.toUpperCase()})</span>
+              ${pillB}
             </div>
-            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;">
-              Conservó posición: <strong style="color: var(--accent-green);">${this.escapeHtml(c.retainedPlayer.name)}</strong> (${roleA} ${c.retainedPlayer.uniKey.toUpperCase()} - ${c.retainedPlayer.score.toLocaleString()} pts) frente a ${c.displacedPlayer.score.toLocaleString()} pts.
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+              <span>Conservó posición: <strong style="color: var(--accent-green);">${this.escapeHtml(c.retainedPlayer.name)}</strong> (${roleA} ${c.retainedPlayer.uniKey.toUpperCase()} - ${c.retainedPlayer.score.toLocaleString()} pts) frente a ${c.displacedPlayer.score.toLocaleString()} pts.</span>
+              ${pillA}
             </div>
           </div>
           <div style="text-align: right;">
