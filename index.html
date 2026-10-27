@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OGame Universe Merger - Simulador de Migración y Fusión</title>
+  <meta name="description" content="Simulador de migración y fusión de universos OGame en memoria 100% Client-Side. Consumo de APIs XML oficiales, resolución de colisiones y recálculo de highscores.">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-block">
+        <div class="logo-icon">🪐</div>
+        <div class="logo-text">
+          <h1>OGame Universe Merger <span class="logo-badge">Zero-Backend</span></h1>
+          <p class="logo-desc">Simulador Client-side de Fusión Galáctica, Colisiones y Recálculo de Highscores</p>
+        </div>
+      </div>
+      <div class="header-proxy-panel">
+        <label for="proxySelect">CORS Proxy:</label>
+        <select id="proxySelect">
+          <option value="corsproxy" selected>corsproxy.io (Recomendado)</option>
+          <option value="allorigins">allorigins.win</option>
+          <option value="codetabs">codetabs.com</option>
+          <option value="direct">Directo (Extensiones / Local)</option>
+          <option value="custom">Personalizado...</option>
+        </select>
+        <input type="text" id="customProxyInput" placeholder="https://mi-proxy/?url=" class="hidden">
+      </div>
+    </header>
+
+    <!-- Universe Setup & Progress Section -->
+    <section class="panel">
+      <h2 class="panel-title"><span>📡</span> Carga de Universos Oficiales OGame</h2>
+      <div class="universe-setup-grid">
+        <div class="setup-form-box">
+          <form id="addUniverseForm">
+            <div class="input-row">
+              <div class="input-field">
+                <label for="communityInput">Comunidad (Idioma)</label>
+                <input type="text" id="communityInput" value="es" placeholder="es, en, de..." maxlength="4" required>
+              </div>
+              <div class="input-field">
+                <label for="uniNumberInput">Nº Universo</label>
+                <input type="number" id="uniNumberInput" value="190" placeholder="190, 195..." min="1" max="999" required>
+              </div>
+            </div>
+            <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+              <button type="submit" id="addUniBtn" class="btn btn-primary" style="flex: 1;">
+                <span>➕</span> Cargar Universo XML
+              </button>
+            </div>
+          </form>
+
+          <div class="quick-load-chips">
+            <span style="color: var(--text-muted); font-size: 0.75rem;">Sugerencias:</span>
+            <button type="button" class="chip-btn" data-comm="es" data-unis="190,195">ES 190 + ES 195</button>
+            <button type="button" class="chip-btn" data-comm="es" data-unis="180,185">ES 180 + ES 185</button>
+            <button type="button" class="chip-btn" data-comm="en" data-unis="1,2">EN 1 + EN 2</button>
+          </div>
+        </div>
+
+        <div class="universes-list-container">
+          <div id="universesList" class="universes-list">
+            <!-- Dynamic cards populated by app.js -->
+            <p id="emptyUniPlaceholder" style="color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 1rem 0;">
+              No hay universos cargados. Agrega al menos 2 servidores para iniciar la simulación de fusión.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="merge-action-bar">
+        <span id="mergeStatusText" style="font-size: 0.85rem; color: var(--text-muted);">
+          Estado: Esperando selección de universos (mínimo 2).
+        </span>
+        <button id="runMergeBtn" class="btn btn-orange" disabled>
+          <span>⚡</span> Ejecutar Simulación de Fusión
+        </button>
+      </div>
+    </section>
+
+    <!-- Results Section (Tabs & Dashboards) -->
+    <main id="resultsContainer" class="panel hidden">
+      <!-- Tabs Navigation -->
+      <nav class="tabs-nav" aria-label="Secciones del resultado">
+        <button class="tab-btn active" data-tab="tabOverview" id="btnTabOverview">
+          <span>📊</span> Métricas Globales
+        </button>
+        <button class="tab-btn" data-tab="tabHighscore" id="btnTabHighscore">
+          <span>🏆</span> Clasificación Unificada
+        </button>
+        <button class="tab-btn" data-tab="tabGalaxy" id="btnTabGalaxy">
+          <span>🌌</span> Explorador Galáctico
+        </button>
+        <button class="tab-btn" data-tab="tabConflicts" id="btnTabConflicts">
+          <span>⚠️</span> Resolución de Conflictos
+          <span id="conflictsBadge" class="tab-badge" style="display: none;">0</span>
+        </button>
+        <button class="tab-btn" data-tab="tabExport" id="btnTabExport">
+          <span>💾</span> Exportar Datos
+        </button>
+      </nav>
+
+      <!-- TAB 1: Global Metrics / Overview -->
+      <section id="tabOverview" class="tab-content" style="padding-top: 1.25rem;">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">Jugadores Fusionados</span>
+            <span id="statTotalPlayers" class="stat-value">0</span>
+            <span id="statActiveSub" class="stat-subtext">0 activos</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Planetas y Lunas</span>
+            <span id="statTotalPlanets" class="stat-value">0</span>
+            <span id="statMoonsSub" class="stat-subtext">0 lunas orbitales</span>
+          </div>
+          <div class="stat-card alert">
+            <span class="stat-label">Colisiones Coordenadas [G:S:P]</span>
+            <span id="statCollisions" class="stat-value">0</span>
+            <span class="stat-subtext">Reubicados automáticamente</span>
+          </div>
+          <div class="stat-card warning">
+            <span class="stat-label">Conflictos Nicks / Tags</span>
+            <span id="statNickCollisions" class="stat-value">0</span>
+            <span class="stat-subtext">Sufijos asignados</span>
+          </div>
+          <div class="stat-card success">
+            <span class="stat-label">Densidad Galáctica</span>
+            <span id="statOccupancy" class="stat-value">0%</span>
+            <span id="statOccupancySlots" class="stat-subtext">0 slots ocupados</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Puntos Totales en Flota</span>
+            <span id="statTotalShips" class="stat-value">0</span>
+            <span class="stat-subtext">Naves en circulación</span>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-card); padding: 1.25rem; border-radius: 6px; border: 1px solid var(--border-color);">
+          <h3 style="font-size: 0.95rem; color: #fff; margin-bottom: 0.5rem; text-transform: uppercase;">
+            Reglas de Resolución Aplicadas en la Fusión
+          </h3>
+          <ul style="color: var(--text-muted); font-size: 0.85rem; line-height: 1.7; padding-left: 1.25rem;">
+            <li><strong style="color: var(--text-main);">Prioridad de Coordenadas:</strong> Si dos planetas colisionan en <code>[G:S:P]</code>, el jugador con mayor puntuación Total conserva la posición original. El planeta desplazado se reubica al slot desocupado más cercano en el mismo sistema o galaxia. Las lunas se mueven automáticamente con su planeta.</li>
+            <li><strong style="color: var(--text-main);">Colisión de Nicks:</strong> Si varios jugadores comparten el mismo nombre exacto, el de mayor puntaje mantiene el nick; los demás reciben sufijo <code>_U{servidor}</code>.</li>
+            <li><strong style="color: var(--text-main);">Delta Rank:</strong> Muestra la variación exacta de posición respecto al universo de origen (<code>Posición Original - Posición Fusionada</code>).</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- TAB 2: Unified Highscore -->
+      <section id="tabHighscore" class="tab-content hidden" style="padding-top: 1.25rem;">
+        <div class="filter-bar">
+          <div class="input-field" style="max-width: 180px;">
+            <label for="hsCategorySelect">Categoría</label>
+            <select id="hsCategorySelect">
+              <option value="total">Total General</option>
+              <option value="economy">Economía</option>
+              <option value="research">Investigación</option>
+              <option value="military">Militar</option>
+            </select>
+          </div>
+
+          <div class="input-field" style="max-width: 180px;">
+            <label for="hsUniverseFilter">Filtrar por Universo</label>
+            <select id="hsUniverseFilter">
+              <option value="all">Todos los Universos</option>
+            </select>
+          </div>
+
+          <div class="input-field" style="flex: 2;">
+            <label for="hsSearchInput">Buscar Jugador / Alianza</label>
+            <input type="text" id="hsSearchInput" class="search-input" placeholder="Escribe para buscar...">
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table" id="highscoreTable">
+            <thead>
+              <tr>
+                <th style="width: 70px;">Rank</th>
+                <th style="width: 80px;">Delta</th>
+                <th>Jugador</th>
+                <th>Alianza</th>
+                <th style="width: 100px;">Uni Origen</th>
+                <th style="text-align: right; width: 140px;">Puntos</th>
+                <th style="text-align: right; width: 100px;">Planetas</th>
+              </tr>
+            </thead>
+            <tbody id="highscoreTableBody">
+              <!-- Populated by app.js -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-controls">
+          <span id="hsPaginationInfo">Mostrando 0-0 de 0</span>
+          <div style="display: flex; gap: 0.5rem;">
+            <button id="hsPrevPageBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem;" disabled>&laquo; Anterior</button>
+            <button id="hsNextPageBtn" class="btn btn-secondary" style="padding: 0.35rem 0.75rem;" disabled>Siguiente &raquo;</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: Galaxy Explorer -->
+      <section id="tabGalaxy" class="tab-content hidden" style="padding-top: 1.25rem;">
+        <div class="galaxy-controls">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <label for="galaxySelect" style="font-size: 0.8rem; font-weight: 600;">Galaxia:</label>
+            <select id="galaxySelect" style="background: var(--bg-panel); border: 1px solid var(--border-color); color: #fff; padding: 0.35rem 0.6rem; border-radius: 4px; font-family: var(--font-mono);">
+              <!-- 1 to 9 -->
+            </select>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <label for="systemInput" style="font-size: 0.8rem; font-weight: 600;">Sistema:</label>
+            <button id="sysPrevBtn" class="btn btn-secondary" style="padding: 0.3rem 0.6rem;">&larr;</button>
+            <input type="number" id="systemInput" value="1" min="1" max="499" style="width: 80px; background: var(--bg-panel); border: 1px solid var(--border-color); color: #fff; padding: 0.35rem 0.5rem; text-align: center; border-radius: 4px; font-family: var(--font-mono);">
+            <button id="sysNextBtn" class="btn btn-secondary" style="padding: 0.3rem 0.6rem;">&rarr;</button>
+          </div>
+
+          <div id="galaxySysSummary" style="font-size: 0.82rem; color: var(--text-muted); margin-left: auto;">
+            Ocupación del Sistema: 0/15
+          </div>
+        </div>
+
+        <div id="systemSlotsGrid" class="slots-grid">
+          <!-- 15 planet slots rendered by app.js -->
+        </div>
+      </section>
+
+      <!-- TAB 4: Conflicts & Relocations -->
+      <section id="tabConflicts" class="tab-content hidden" style="padding-top: 1.25rem;">
+        <h3 style="font-size: 0.9rem; color: var(--accent-orange); text-transform: uppercase; margin-bottom: 0.75rem;">
+          Planetas Reubicados por Colisión de Coordenadas [G:S:P]
+        </h3>
+        <div id="coordConflictsList">
+          <!-- Populated by app.js -->
+        </div>
+
+        <h3 style="font-size: 0.9rem; color: var(--accent-cyan); text-transform: uppercase; margin-top: 1.5rem; margin-bottom: 0.75rem;">
+          Disambiguación de Nicks de Jugadores y Tags de Alianza
+        </h3>
+        <div id="nickConflictsList">
+          <!-- Populated by app.js -->
+        </div>
+      </section>
+
+      <!-- TAB 5: Export / Data -->
+      <section id="tabExport" class="tab-content hidden" style="padding-top: 1.25rem;">
+        <div style="background: var(--bg-card); padding: 1.5rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 1rem;">
+          <h3 style="color: #fff; font-size: 1rem;">Exportar Simulación de Universo Fusionado</h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">
+            Descarga el dataset completo de la fusión en formato JSON (jugadores unificados, coordenadas finales reubicadas, highscores y métricas).
+          </p>
+          <div style="display: flex; gap: 0.75rem;">
+            <button id="exportJsonBtn" class="btn btn-primary">
+              <span>📥</span> Descargar JSON Fusionado
+            </button>
+            <button id="resetSessionBtn" class="btn btn-secondary">
+              <span>🔄</span> Reiniciar Sesión
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
