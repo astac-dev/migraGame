@@ -179,9 +179,12 @@ class OgameMergerApp {
       coordConflictsList: document.getElementById('coordConflictsList'),
       nickConflictsList: document.getElementById('nickConflictsList'),
 
-      // Tab 5: Export
+      // Tab 5: Export & Import
       exportJsonBtn: document.getElementById('exportJsonBtn'),
-      resetSessionBtn: document.getElementById('resetSessionBtn')
+      resetSessionBtn: document.getElementById('resetSessionBtn'),
+      importJsonInput: document.getElementById('importJsonInput'),
+      importJsonTabInput: document.getElementById('importJsonTabInput'),
+      importTabStatus: document.getElementById('importTabStatus')
     };
   }
 
@@ -402,7 +405,7 @@ class OgameMergerApp {
       this.renderGalaxySystem();
     });
 
-    // Export & Reset
+    // Export, Import & Reset
     this.dom.exportJsonBtn.addEventListener('click', () => {
       this.exportMergedJson();
     });
@@ -412,6 +415,29 @@ class OgameMergerApp {
         this.resetSession();
       }
     });
+
+    if (this.dom.importJsonInput) {
+      this.dom.importJsonInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          await this.importMergedJson(file);
+        }
+        e.target.value = '';
+      });
+    }
+
+    if (this.dom.importJsonTabInput) {
+      this.dom.importJsonTabInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          if (this.dom.importTabStatus) {
+            this.dom.importTabStatus.textContent = file.name;
+          }
+          await this.importMergedJson(file);
+        }
+        e.target.value = '';
+      });
+    }
   }
 
   renderMigrationGroupDetails(groupId) {
@@ -1054,14 +1080,42 @@ class OgameMergerApp {
   exportMergedJson() {
     if (!this.mergedResult) return;
     const exportData = {
+      version: 2,
+      exportedAt: new Date().toISOString(),
       destination: this.mergedResult.destination,
       analytics: {
         ...this.mergedResult.analytics,
-        systemDensity: Array.from(this.mergedResult.analytics.systemDensity.entries())
+        systemDensity: this.mergedResult.analytics.systemDensity instanceof Map 
+          ? Array.from(this.mergedResult.analytics.systemDensity.entries())
+          : (Array.isArray(this.mergedResult.analytics.systemDensity) 
+              ? this.mergedResult.analytics.systemDensity 
+              : Object.entries(this.mergedResult.analytics.systemDensity || {}))
       },
       conflicts: this.mergedResult.conflicts,
       highscores: this.mergedResult.highscores,
-      planetsCount: this.mergedResult.planets.length
+      planetsCount: this.mergedResult.planets.length,
+      planets: this.mergedResult.planets,
+      players: this.mergedResult.players instanceof Map 
+        ? Array.from(this.mergedResult.players.entries())
+        : (Array.isArray(this.mergedResult.players) 
+            ? this.mergedResult.players 
+            : Object.entries(this.mergedResult.players || {})),
+      alliances: this.mergedResult.alliances instanceof Map 
+        ? Array.from(this.mergedResult.alliances.entries())
+        : (Array.isArray(this.mergedResult.alliances) 
+            ? this.mergedResult.alliances 
+            : Object.entries(this.mergedResult.alliances || {})),
+      sourceUniverses: Array.from(this.loadedUniverses.values()).map(u => ({
+        community: u.community,
+        uniNumber: u.uniNumber,
+        uniKey: u.uniKey || `${u.community}_${u.uniNumber}`,
+        role: u.role,
+        serverData: u.serverData,
+        endpointsLoaded: u.endpointsLoaded,
+        playersCount: u.players?.size || (u.playersCount ?? 0),
+        planetsCount: u.planets?.length || (u.planetsCount ?? 0),
+        alliancesCount: u.alliances?.size || (u.alliancesCount ?? 0)
+      }))
     };
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -1075,9 +1129,152 @@ class OgameMergerApp {
     URL.revokeObjectURL(url);
   }
 
+  async importMergedJson(file) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (!data || (!data.highscores && !data.analytics && !data.destination)) {
+        throw new Error('El archivo no tiene el formato válido de una simulación de universo de OGame.');
+      }
+
+      // Reconstruct players Map
+      let playersMap = new Map();
+      if (Array.isArray(data.players)) {
+        playersMap = new Map(data.players);
+      } else if (data.players && typeof data.players === 'object') {
+        playersMap = new Map(Object.entries(data.players));
+      } else if (data.highscores?.total) {
+        // Fallback for older export format: reconstruct players from highscore list
+        for (const p of data.highscores.total) {
+          playersMap.set(p.id, {
+            id: p.id,
+            name: p.name,
+            displayName: p.name,
+            originalName: p.originalName || p.name,
+            uniKey: p.uniKey,
+            role: p.role,
+            allianceId: p.allianceId,
+            speedTrafficLight: p.speedTrafficLight,
+            status: p.status,
+            scores: { total: p.score },
+            mergedRanks: { total: p.rank },
+            ships: 0
+          });
+        }
+      }
+
+      // Reconstruct alliances Map
+      let alliancesMap = new Map();
+      if (Array.isArray(data.alliances)) {
+        alliancesMap = new Map(data.alliances);
+      } else if (data.alliances && typeof data.alliances === 'object') {
+        alliancesMap = new Map(Object.entries(data.alliances));
+      }
+
+      // Reconstruct planets array
+      const planets = Array.isArray(data.planets) ? data.planets : [];
+
+      // Reconstruct systemDensity Map in analytics
+      const analytics = data.analytics || {};
+      if (Array.isArray(analytics.systemDensity)) {
+        analytics.systemDensity = new Map(analytics.systemDensity);
+      } else if (analytics.systemDensity && !(analytics.systemDensity instanceof Map)) {
+        analytics.systemDensity = new Map(Object.entries(analytics.systemDensity));
+      } else if (!analytics.systemDensity) {
+        analytics.systemDensity = new Map();
+      }
+
+      // Set mergedResult
+      this.mergedResult = {
+        destination: data.destination || {
+          name: 'Universo Importado',
+          galaxies: 9,
+          systems: 499,
+          slotsPerSystem: 15
+        },
+        players: playersMap,
+        alliances: alliancesMap,
+        planets,
+        highscores: data.highscores || {},
+        conflicts: data.conflicts || {
+          coordinates: [],
+          nicknames: [],
+          tags: []
+        },
+        analytics
+      };
+
+      // Restore source universes if available
+      if (Array.isArray(data.sourceUniverses) && data.sourceUniverses.length > 0) {
+        for (const u of data.sourceUniverses) {
+          const key = u.uniKey || `${u.community}_${u.uniNumber}`;
+          this.loadedUniverses.set(key, {
+            ...u,
+            uniKey: key,
+            players: { size: u.playersCount || (u.players?.size ?? 0) },
+            planets: { length: u.planetsCount || (u.planets?.length ?? 0) },
+            alliances: { size: u.alliancesCount || (u.alliances?.size ?? 0) }
+          });
+        }
+      } else {
+        // Fallback: extract distinct uniKeys from players or highscores
+        const distinctUnis = new Set();
+        for (const p of playersMap.values()) {
+          if (p.uniKey) distinctUnis.add(p.uniKey);
+        }
+        for (const key of distinctUnis) {
+          if (!this.loadedUniverses.has(key)) {
+            const parts = key.split('_');
+            const comm = parts[0] || 'es';
+            const num = parts[1] || '1';
+            this.loadedUniverses.set(key, {
+              community: comm,
+              uniNumber: num,
+              uniKey: key,
+              role: 'destination',
+              serverData: { name: `Uni ${num}` },
+              players: { size: 0 },
+              planets: { length: 0 },
+              alliances: { size: 0 }
+            });
+          }
+        }
+      }
+
+      // Update universe lists and actions
+      this.renderUniversesList();
+      this.updateMergeActionState();
+
+      // Refresh filter options and galaxy selectors
+      this.populateUniverseFilterOptions();
+      this.initGalaxySelectOptions(this.mergedResult.destination?.galaxies || 9);
+
+      // Render all simulation results
+      this.renderOverviewMetrics();
+      this.renderHighscoreTable();
+      this.renderGalaxySystem();
+      this.renderConflictsView();
+
+      // Reveal results and navigate to overview
+      this.dom.resultsContainer.classList.remove('hidden');
+      this.switchTab('tabOverview');
+      this.dom.resultsContainer.scrollIntoView({ behavior: 'smooth' });
+
+      const totalPl = this.mergedResult.players.size || (this.mergedResult.highscores?.total?.length ?? 0);
+      alert(`Simulación importada con éxito.\n• Jugadores: ${totalPl.toLocaleString()}\n• Planetas: ${planets.length.toLocaleString()}\n• Servidores detectados: ${this.loadedUniverses.size}`);
+    } catch (err) {
+      alert(`Error al importar el archivo JSON: ${err.message}`);
+    }
+  }
+
   resetSession() {
     this.mergedResult = null;
     this.dom.resultsContainer.classList.add('hidden');
+    if (this.dom.importTabStatus) {
+      this.dom.importTabStatus.textContent = 'Listo para cargar';
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
