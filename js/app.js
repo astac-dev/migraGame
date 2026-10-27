@@ -1,5 +1,7 @@
 import { OgameApiClient } from './ogameApi.js';
 import { UniverseMergeEngine } from './mergeEngine.js';
+import { UniverseStorage } from './storage.js';
+import { UiIngestController } from './uiIngest.js';
 
 const MIGRATION_GROUPS = {
   1: {
@@ -71,10 +73,11 @@ const MIGRATION_GROUPS = {
 class OgameMergerApp {
   constructor() {
     this.apiClient = new OgameApiClient({ proxyType: 'corsproxy' });
+    this.storage = new UniverseStorage();
     this.loadedUniverses = new Map();
     this.mergedResult = null;
     this.currentGroup = 1;
-    
+
     this.activeTab = 'tabOverview';
     this.hsState = {
       category: 'total',
@@ -90,14 +93,24 @@ class OgameMergerApp {
     };
 
     this.initDomReferences();
+    this.initIngestModule();
     this.bindEvents();
     this.renderMigrationGroupDetails(1);
     this.initGalaxySelectOptions();
+
+    // Auto-load existing saved universes from IndexedDB
+    this.loadSavedUniversesFromStorage();
   }
 
   initDomReferences() {
     this.dom = {
-      // Proxy
+      // Ingest Mode Switcher
+      modeBypassBtn: document.getElementById('modeBypassBtn'),
+      modeAutoFetchBtn: document.getElementById('modeAutoFetchBtn'),
+      bypassIngestContainer: document.getElementById('bypassIngestContainer'),
+      autoFetchContainer: document.getElementById('autoFetchContainer'),
+
+      // Fallback Proxy
       proxySelect: document.getElementById('proxySelect'),
       customProxyInput: document.getElementById('customProxyInput'),
 
@@ -105,7 +118,7 @@ class OgameMergerApp {
       groupTabButtons: document.querySelectorAll('.group-tab-btn'),
       groupDetailsContainer: document.getElementById('groupDetailsContainer'),
 
-      // Universe Setup
+      // Universe Setup (Auto Fetch)
       addUniverseForm: document.getElementById('addUniverseForm'),
       communityInput: document.getElementById('communityInput'),
       uniNumberInput: document.getElementById('uniNumberInput'),
@@ -117,12 +130,13 @@ class OgameMergerApp {
       closeCommunityListBtn: document.getElementById('closeCommunityListBtn'),
       selectCommunityUniBtn: document.getElementById('selectCommunityUniBtn'),
 
+      // Universes List & Fusion Action
       universesList: document.getElementById('universesList'),
       emptyUniPlaceholder: document.getElementById('emptyUniPlaceholder'),
       mergeStatusText: document.getElementById('mergeStatusText'),
       runMergeBtn: document.getElementById('runMergeBtn'),
 
-      // Containers & Tabs
+      // Results Tabs & Containers
       resultsContainer: document.getElementById('resultsContainer'),
       tabButtons: document.querySelectorAll('.tab-btn'),
       tabContents: document.querySelectorAll('.tab-content'),
@@ -166,8 +180,57 @@ class OgameMergerApp {
     };
   }
 
+  initIngestModule() {
+    this.ingestController = new UiIngestController({
+      container: this.dom.bypassIngestContainer,
+      storage: this.storage,
+      onUniverseReady: (uData) => {
+        this.loadedUniverses.set(uData.uniKey, uData);
+        this.renderUniversesList();
+        this.updateMergeActionState();
+      },
+      onUniverseDeleted: (uniKey) => {
+        if (uniKey === 'all') {
+          this.loadedUniverses.clear();
+        } else {
+          this.loadedUniverses.delete(uniKey);
+        }
+        this.renderUniversesList();
+        this.updateMergeActionState();
+      }
+    });
+  }
+
+  async loadSavedUniversesFromStorage() {
+    try {
+      const saved = await this.storage.getAllUniverses();
+      for (const u of saved) {
+        this.loadedUniverses.set(u.uniKey, u);
+      }
+      this.renderUniversesList();
+      this.updateMergeActionState();
+    } catch (err) {
+      console.warn('Could not load cached universes from IndexedDB:', err);
+    }
+  }
+
   bindEvents() {
-    // Proxy selection
+    // Mode switcher
+    this.dom.modeBypassBtn.addEventListener('click', () => {
+      this.dom.modeBypassBtn.className = 'bg-cyan-500/10 border border-cyan-500 text-cyan-400 font-bold text-xs px-4 py-2 rounded flex items-center gap-2 transition';
+      this.dom.modeAutoFetchBtn.className = 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs px-4 py-2 rounded flex items-center gap-2 transition';
+      this.dom.bypassIngestContainer.classList.remove('hidden');
+      this.dom.autoFetchContainer.classList.add('hidden');
+    });
+
+    this.dom.modeAutoFetchBtn.addEventListener('click', () => {
+      this.dom.modeAutoFetchBtn.className = 'bg-cyan-500/10 border border-cyan-500 text-cyan-400 font-bold text-xs px-4 py-2 rounded flex items-center gap-2 transition';
+      this.dom.modeBypassBtn.className = 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs px-4 py-2 rounded flex items-center gap-2 transition';
+      this.dom.bypassIngestContainer.classList.add('hidden');
+      this.dom.autoFetchContainer.classList.remove('hidden');
+    });
+
+    // Fallback Proxy Selection
     this.dom.proxySelect.addEventListener('change', (e) => {
       const val = e.target.value;
       if (val === 'custom') {
@@ -193,14 +256,14 @@ class OgameMergerApp {
       });
     });
 
-    // Universe form
+    // Legacy auto-fetch form
     this.dom.addUniverseForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const comm = this.dom.communityInput.value.trim().toLowerCase();
       const uniNum = parseInt(this.dom.uniNumberInput.value.trim(), 10);
       const role = this.dom.uniRoleSelect.value;
       if (comm && uniNum) {
-        await this.loadSingleUniverse(comm, uniNum, role);
+        await this.loadSingleUniverseViaProxy(comm, uniNum, role);
       }
     });
 
@@ -208,7 +271,7 @@ class OgameMergerApp {
     this.dom.loadCommunityListBtn.addEventListener('click', async () => {
       const comm = this.dom.communityInput.value.trim().toLowerCase() || 'es';
       this.dom.loadCommunityListBtn.disabled = true;
-      this.dom.loadCommunityListBtn.textContent = 'Descargando universes.xml...';
+      this.dom.loadCommunityListBtn.textContent = 'Descargando...';
 
       try {
         const uniList = await this.apiClient.fetchCommunityUniverses(comm);
@@ -226,7 +289,7 @@ class OgameMergerApp {
         alert(`Error al obtener universes.xml: ${err.message}`);
       } finally {
         this.dom.loadCommunityListBtn.disabled = false;
-        this.dom.loadCommunityListBtn.innerHTML = '<span>🌐</span> Ver Universos Oficiales';
+        this.dom.loadCommunityListBtn.innerHTML = '<span>🌐</span> Ver Universos';
       }
     });
 
@@ -247,11 +310,10 @@ class OgameMergerApp {
       this.executeSimulation();
     });
 
-    // Tabs
+    // Results tabs
     this.dom.tabButtons.forEach(btn => {
       btn.addEventListener('click', () => {
-        const targetTab = btn.dataset.tab;
-        this.switchTab(targetTab);
+        this.switchTab(btn.dataset.tab);
       });
     });
 
@@ -290,7 +352,7 @@ class OgameMergerApp {
       this.renderHighscoreTable();
     });
 
-    // Galaxy explorer controls
+    // Galaxy controls
     this.dom.galaxySelect.addEventListener('change', (e) => {
       this.galaxyState.galaxy = parseInt(e.target.value, 10);
       this.renderGalaxySystem();
@@ -308,22 +370,14 @@ class OgameMergerApp {
 
     this.dom.sysPrevBtn.addEventListener('click', () => {
       const maxSys = this.mergedResult?.destination?.systems || 499;
-      if (this.galaxyState.system > 1) {
-        this.galaxyState.system--;
-      } else {
-        this.galaxyState.system = maxSys;
-      }
+      this.galaxyState.system = this.galaxyState.system > 1 ? this.galaxyState.system - 1 : maxSys;
       this.dom.systemInput.value = this.galaxyState.system;
       this.renderGalaxySystem();
     });
 
     this.dom.sysNextBtn.addEventListener('click', () => {
       const maxSys = this.mergedResult?.destination?.systems || 499;
-      if (this.galaxyState.system < maxSys) {
-        this.galaxyState.system++;
-      } else {
-        this.galaxyState.system = 1;
-      }
+      this.galaxyState.system = this.galaxyState.system < maxSys ? this.galaxyState.system + 1 : 1;
       this.dom.systemInput.value = this.galaxyState.system;
       this.renderGalaxySystem();
     });
@@ -334,7 +388,7 @@ class OgameMergerApp {
     });
 
     this.dom.resetSessionBtn.addEventListener('click', () => {
-      if (confirm('¿Deseas reiniciar la sesión y borrar los universos cargados?')) {
+      if (confirm('¿Deseas reiniciar la sesión y borrar la simulación actual?')) {
         this.resetSession();
       }
     });
@@ -348,29 +402,25 @@ class OgameMergerApp {
     const frag = document.createDocumentFragment();
 
     const container = document.createElement('div');
-    container.style.gridColumn = '1 / -1';
-    container.style.display = 'grid';
-    container.style.gridTemplateColumns = '1.3fr 1fr';
-    container.style.gap = '1rem';
+    container.className = 'grid grid-cols-1 md:grid-cols-2 gap-4 col-span-full';
 
     // Left: Exodus
     const exodusBox = document.createElement('div');
     exodusBox.innerHTML = `
-      <div style="font-weight: 700; color: var(--accent-orange); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem;">
+      <div class="font-bold text-amber-400 mb-2 flex items-center gap-1.5 text-xs">
         <span>🚪</span> Universos de Éxodo (Servidores a Migrar):
       </div>
-      <div class="quick-load-chips" id="exodusChipsContainer"></div>
+      <div class="flex flex-wrap gap-1.5" id="exodusChipsContainer"></div>
     `;
 
     const exodusChips = exodusBox.querySelector('#exodusChipsContainer');
     for (const u of group.exodus) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'chip-btn';
+      btn.className = 'chip-btn text-[11px]';
       btn.textContent = `${u.name} (${u.id})`;
-      btn.title = `Cargar ${u.name} como universo de Éxodo`;
       btn.addEventListener('click', () => {
-        this.loadSingleUniverse(comm, u.id, 'exodus');
+        this.loadSingleUniverseViaProxy(comm, u.id, 'exodus');
       });
       exodusChips.appendChild(btn);
     }
@@ -378,22 +428,20 @@ class OgameMergerApp {
     // Right: Destinations
     const destBox = document.createElement('div');
     destBox.innerHTML = `
-      <div style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem;">
+      <div class="font-bold text-cyan-400 mb-2 flex items-center gap-1.5 text-xs">
         <span>🎯</span> Universos Destino (Anfitriones):
       </div>
-      <div class="quick-load-chips" id="destChipsContainer"></div>
+      <div class="flex flex-wrap gap-1.5" id="destChipsContainer"></div>
     `;
 
     const destChips = destBox.querySelector('#destChipsContainer');
     for (const u of group.destinations) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'chip-btn';
-      btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+      btn.className = 'chip-btn text-[11px] border-cyan-500/40 text-cyan-300';
       btn.textContent = `★ ${u.name} (${u.id})`;
-      btn.title = `Cargar ${u.name} como universo Destino`;
       btn.addEventListener('click', () => {
-        this.loadSingleUniverse(comm, u.id, 'destination');
+        this.loadSingleUniverseViaProxy(comm, u.id, 'destination');
       });
       destChips.appendChild(btn);
     }
@@ -417,22 +465,17 @@ class OgameMergerApp {
     this.dom.galaxySelect.appendChild(frag);
   }
 
-  async loadSingleUniverse(community, uniNumber, role = 'exodus') {
+  async loadSingleUniverseViaProxy(community, uniNumber, role = 'exodus') {
     const uniKey = `${community}_${uniNumber}`;
 
     if (this.loadedUniverses.has(uniKey)) {
-      alert(`El universo ${community.toUpperCase()} ${uniNumber} ya está en la lista.`);
+      alert(`El universo ${community.toUpperCase()} #${uniNumber} ya está en la lista.`);
       return;
     }
 
-    if (this.dom.emptyUniPlaceholder) {
-      this.dom.emptyUniPlaceholder.remove();
-    }
-
-    const cardEl = this.createUniverseCard(uniKey, community, uniNumber, role);
-    this.dom.universesList.appendChild(cardEl);
-
-    this.setControlsLoading(true);
+    const card = this.createProxyUniverseCard(uniKey, community, uniNumber, role);
+    this.dom.universesList.appendChild(card);
+    if (this.dom.emptyUniPlaceholder) this.dom.emptyUniPlaceholder.remove();
 
     try {
       const universeData = await this.apiClient.fetchUniverseData(
@@ -440,46 +483,55 @@ class OgameMergerApp {
         uniNumber,
         role,
         (progress) => {
-          this.updateUniverseCardProgress(cardEl, progress);
+          const bar = card.querySelector('.progress-bar');
+          const label = card.querySelector('.uni-stats-line span');
+          if (bar) bar.style.width = `${progress.percent}%`;
+          if (label) label.textContent = `${progress.label} (${progress.current}/${progress.total})`;
         }
       );
 
       this.loadedUniverses.set(uniKey, universeData);
-      this.updateUniverseCardSuccess(cardEl, universeData);
+      await this.storage.saveUniverse(universeData);
+      this.renderUniversesList();
       this.updateMergeActionState();
+      this.ingestController.refreshSavedUniversesList();
     } catch (err) {
-      this.updateUniverseCardError(cardEl, err.message);
-    } finally {
-      this.setControlsLoading(false);
+      card.classList.remove('loading');
+      card.classList.add('error');
+      const badge = card.querySelector('.uni-status-badge');
+      if (badge) {
+        badge.className = 'uni-status-badge badge-error';
+        badge.textContent = 'Error 403 / CORS';
+      }
+      const statsLine = card.querySelector('.uni-stats-line');
+      if (statsLine) {
+        statsLine.innerHTML = `<span style="color: var(--accent-red); font-size: 0.75rem;">${err.message}. Usa la pestaña de Ingesta Desacoplada Anti-CORS.</span>`;
+      }
     }
   }
 
-  createUniverseCard(uniKey, community, uniNumber, role) {
+  createProxyUniverseCard(uniKey, community, uniNumber, role) {
     const card = document.createElement('div');
     card.id = `card_${uniKey}`;
     card.className = 'universe-card loading';
 
-    const roleTag = role === 'destination' 
-      ? '<span style="color: var(--accent-cyan); font-weight: 700;">[★ DESTINO]</span>'
-      : '<span style="color: var(--accent-orange); font-weight: 700;">[ÉXODO]</span>';
+    const roleTag = role === 'destination' ? '[★ DESTINO]' : '[ÉXODO]';
 
     card.innerHTML = `
-      <div class="uni-info-main" style="flex: 1;">
+      <div class="uni-info-main flex-1">
         <div class="uni-title">
           <span>${roleTag} Servidor ${community.toUpperCase()} #${uniNumber}</span>
           <span class="uni-status-badge badge-loading">Descargando...</span>
         </div>
         <div class="uni-stats-line" id="stats_${uniKey}">
-          <span id="label_${uniKey}">Iniciando conexión con Gameforge XML...</span>
+          <span>Iniciando conexión con Gameforge XML...</span>
         </div>
         <div class="progress-track">
-          <div class="progress-bar" id="bar_${uniKey}"></div>
+          <div class="progress-bar"></div>
         </div>
       </div>
       <div>
-        <button type="button" class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem;" data-remove="${uniKey}">
-          ✖
-        </button>
+        <button type="button" class="btn btn-secondary text-xs px-2 py-1" data-remove="${uniKey}">✖</button>
       </div>
     `;
 
@@ -495,51 +547,56 @@ class OgameMergerApp {
     return card;
   }
 
-  updateUniverseCardProgress(cardEl, progress) {
-    const bar = cardEl.querySelector('.progress-bar');
-    const label = cardEl.querySelector('.uni-stats-line span');
-    if (bar) bar.style.width = `${progress.percent}%`;
-    if (label) label.textContent = `${progress.label} (${progress.current}/${progress.total})`;
-  }
+  renderUniversesList() {
+    this.dom.universesList.innerHTML = '';
 
-  updateUniverseCardSuccess(cardEl, data) {
-    cardEl.classList.remove('loading');
-    cardEl.classList.add('ready');
-
-    const badge = cardEl.querySelector('.uni-status-badge');
-    if (badge) {
-      badge.className = 'uni-status-badge badge-ready';
-      badge.textContent = 'Listo';
+    if (this.loadedUniverses.size === 0) {
+      if (this.dom.emptyUniPlaceholder) {
+        this.dom.universesList.appendChild(this.dom.emptyUniPlaceholder);
+      }
+      return;
     }
 
-    const statsLine = cardEl.querySelector('.uni-stats-line');
-    if (statsLine) {
-      statsLine.innerHTML = `
-        <span>👥 ${data.players.size.toLocaleString()} Jugadores</span>
-        <span>🪐 ${data.planets.length.toLocaleString()} Planetas</span>
-        <span>🛡️ ${data.alliances.size.toLocaleString()} Alianzas</span>
-        <span>⚡ Vel x${data.serverData.speed}</span>
+    const frag = document.createDocumentFragment();
+
+    for (const [uniKey, data] of this.loadedUniverses.entries()) {
+      const card = document.createElement('div');
+      card.className = 'universe-card ready';
+
+      const roleBadge = data.role === 'destination' 
+        ? '<span class="text-cyan-400 font-bold">[★ DESTINO]</span>'
+        : '<span class="text-amber-400 font-bold">[ÉXODO]</span>';
+
+      card.innerHTML = `
+        <div class="uni-info-main flex-1">
+          <div class="uni-title">
+            <span>${roleBadge} Servidor ${data.community.toUpperCase()} #${data.uniNumber} (${data.serverData?.name || 'Uni'})</span>
+            <span class="uni-status-badge badge-ready">Listo</span>
+          </div>
+          <div class="uni-stats-line">
+            <span>👥 ${data.players.size.toLocaleString()} Jugadores</span>
+            <span>🪐 ${data.planets.length.toLocaleString()} Planetas</span>
+            <span>🛡️ ${data.alliances.size.toLocaleString()} Alianzas</span>
+            <span>⚡ Vel x${data.serverData?.speed || 1}</span>
+          </div>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary text-xs px-2 py-1" data-remove="${uniKey}">✖</button>
+        </div>
       `;
+
+      card.querySelector(`[data-remove="${uniKey}"]`).addEventListener('click', async () => {
+        this.loadedUniverses.delete(uniKey);
+        await this.storage.deleteUniverse(uniKey);
+        this.renderUniversesList();
+        this.updateMergeActionState();
+        this.ingestController.refreshSavedUniversesList();
+      });
+
+      frag.appendChild(card);
     }
 
-    const bar = cardEl.querySelector('.progress-bar');
-    if (bar) bar.style.width = '100%';
-  }
-
-  updateUniverseCardError(cardEl, errorMessage) {
-    cardEl.classList.remove('loading');
-    cardEl.classList.add('error');
-
-    const badge = cardEl.querySelector('.uni-status-badge');
-    if (badge) {
-      badge.className = 'uni-status-badge badge-error';
-      badge.textContent = 'Error';
-    }
-
-    const statsLine = cardEl.querySelector('.uni-stats-line');
-    if (statsLine) {
-      statsLine.innerHTML = `<span style="color: var(--accent-red); font-size: 0.75rem;">${errorMessage}</span>`;
-    }
+    this.dom.universesList.appendChild(frag);
   }
 
   updateMergeActionState() {
@@ -550,15 +607,9 @@ class OgameMergerApp {
       this.dom.mergeStatusText.style.color = 'var(--accent-green)';
     } else {
       this.dom.runMergeBtn.disabled = true;
-      this.dom.mergeStatusText.textContent = `Estado: ${readyCount} universo cargado. Se requiere al menos 2 servidores.`;
+      this.dom.mergeStatusText.textContent = `Estado: ${readyCount} universo cargado. Se requiere al menos 2 servidores para simular.`;
       this.dom.mergeStatusText.style.color = 'var(--text-muted)';
     }
-  }
-
-  setControlsLoading(isLoading) {
-    this.dom.addUniBtn.disabled = isLoading;
-    this.dom.communityInput.disabled = isLoading;
-    this.dom.uniNumberInput.disabled = isLoading;
   }
 
   executeSimulation() {
@@ -579,6 +630,7 @@ class OgameMergerApp {
 
       this.dom.resultsContainer.classList.remove('hidden');
       this.switchTab('tabOverview');
+      this.dom.resultsContainer.scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
       alert(`Error en el motor de fusión: ${err.message}`);
     }
@@ -634,7 +686,7 @@ class OgameMergerApp {
       const opt = document.createElement('option');
       opt.value = key;
       const rolePrefix = uni.role === 'destination' ? '[★ Destino]' : '[Éxodo]';
-      opt.textContent = `${rolePrefix} ${uni.community.toUpperCase()} #${uni.uniNumber} (${uni.serverData.name})`;
+      opt.textContent = `${rolePrefix} ${uni.community.toUpperCase()} #${uni.uniNumber} (${uni.serverData?.name || 'Uni'})`;
       frag.appendChild(opt);
     }
     this.dom.hsUniverseFilter.appendChild(frag);
@@ -643,7 +695,7 @@ class OgameMergerApp {
   renderHighscoreTable() {
     const cat = this.hsState.category;
     const rawList = this.mergedResult.highscores[cat] || [];
-    
+
     let filtered = rawList;
     if (this.hsState.filterUni !== 'all') {
       filtered = filtered.filter(p => p.uniKey === this.hsState.filterUni);
@@ -664,14 +716,14 @@ class OgameMergerApp {
     this.dom.hsPaginationInfo.textContent = totalRecords > 0 
       ? `Mostrando ${startIdx + 1}-${endIdx} de ${totalRecords.toLocaleString()} jugadores`
       : 'No se encontraron resultados';
-    
+
     this.dom.hsPrevPageBtn.disabled = this.hsState.page <= 1;
     this.dom.hsNextPageBtn.disabled = endIdx >= totalRecords;
 
     const frag = document.createDocumentFragment();
     for (const item of pageRecords) {
       const tr = document.createElement('tr');
-      
+
       let deltaHtml = '<span class="delta-badge delta-none">0</span>';
       if (item.delta > 0) {
         deltaHtml = `<span class="delta-badge delta-up">▲ +${item.delta}</span>`;
@@ -891,12 +943,9 @@ class OgameMergerApp {
   }
 
   resetSession() {
-    this.loadedUniverses.clear();
     this.mergedResult = null;
-    this.dom.universesList.innerHTML = '';
-    this.dom.universesList.appendChild(this.dom.emptyUniPlaceholder);
     this.dom.resultsContainer.classList.add('hidden');
-    this.updateMergeActionState();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   escapeHtml(str) {
