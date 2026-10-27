@@ -14,12 +14,14 @@ export class UiIngestController {
    * @param {UniverseStorage} options.storage
    * @param {Function} options.onUniverseReady - Callback when a universe is successfully ingested and saved
    * @param {Function} options.onUniverseDeleted - Callback when a universe is removed
+   * @param {Function} options.onUniverseRoleChanged - Callback when a universe role is modified
    */
   constructor(options) {
     this.container = options.container;
     this.storage = options.storage;
     this.onUniverseReady = options.onUniverseReady || (() => {});
     this.onUniverseDeleted = options.onUniverseDeleted || (() => {});
+    this.onUniverseRoleChanged = options.onUniverseRoleChanged || (() => {});
 
     this.parser = new XmlParser();
 
@@ -670,21 +672,43 @@ export class UiIngestController {
       }
 
       listContainer.innerHTML = saved.map(u => {
-        const roleBadge = u.role === 'destination' 
-          ? '<span class="text-cyan-400 font-bold">[★ Destino]</span>'
-          : '<span class="text-amber-400 font-bold">[Éxodo]</span>';
-
+        const isDest = u.role === 'destination';
         const dateStr = u.savedAt ? this.formatTimestamp(u.savedAt) : 'Desconocida';
 
         return `
           <div class="bg-slate-950 border border-slate-800 rounded px-3 py-1.5 flex items-center gap-2">
-            <span>${roleBadge} ${u.community.toUpperCase()} #${u.uniNumber} (${u.serverData?.name || 'Uni'})</span>
+            <select class="change-saved-role-select bg-slate-900 border border-slate-700 text-xs rounded px-1.5 py-0.5 font-semibold cursor-pointer ${isDest ? 'text-cyan-400' : 'text-amber-400'}" data-unikey="${u.uniKey}">
+              <option value="destination" ${isDest ? 'selected' : ''}>★ Destino</option>
+              <option value="exodus" ${!isDest ? 'selected' : ''}>Éxodo</option>
+            </select>
+            <span>${u.community.toUpperCase()} #${u.uniNumber} (${u.serverData?.name || 'Uni'})</span>
             <span class="text-slate-400 font-mono text-[11px]">${u.players.size.toLocaleString()} jug. · ${u.planets.length.toLocaleString()} plan.</span>
             <span class="text-slate-500 font-mono text-[10px]">(${dateStr})</span>
             <button class="delete-saved-uni-btn text-red-400 hover:text-red-300 ml-1" data-unikey="${u.uniKey}">✖</button>
           </div>
         `;
       }).join('');
+
+      listContainer.querySelectorAll('.change-saved-role-select').forEach(sel => {
+        sel.addEventListener('change', async () => {
+          const key = sel.dataset.unikey;
+          const newRole = sel.value;
+          const u = await this.storage.getUniverse(key);
+          if (u) {
+            u.role = newRole;
+            if (u.serverData) u.serverData.role = newRole;
+            if (u.players) {
+              for (const p of u.players.values()) p.role = newRole;
+            }
+            if (u.planets) {
+              for (const pl of u.planets) pl.role = newRole;
+            }
+            await this.storage.saveUniverse(u);
+            this.refreshSavedUniversesList();
+            this.onUniverseRoleChanged(key, newRole, u);
+          }
+        });
+      });
 
       listContainer.querySelectorAll('.delete-saved-uni-btn').forEach(btn => {
         btn.addEventListener('click', async () => {

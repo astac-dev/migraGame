@@ -202,6 +202,13 @@ class OgameMergerApp {
         }
         this.renderUniversesList();
         this.updateMergeActionState();
+      },
+      onUniverseRoleChanged: (uniKey, newRole, updatedUni) => {
+        this.loadedUniverses.set(uniKey, updatedUni);
+        this.renderUniversesList();
+        if (this.mergedResult) {
+          this.executeSimulation();
+        }
       }
     });
   }
@@ -576,7 +583,8 @@ class OgameMergerApp {
       const card = document.createElement('div');
       card.className = 'universe-card ready';
 
-      const roleBadge = data.role === 'destination' 
+      const isDest = data.role === 'destination';
+      const roleBadge = isDest 
         ? '<span class="text-cyan-400 font-bold">[★ DESTINO]</span>'
         : '<span class="text-amber-400 font-bold">[ÉXODO]</span>';
 
@@ -590,13 +598,24 @@ class OgameMergerApp {
             <span>👥 ${data.players.size.toLocaleString()} Jugadores</span>
             <span>🪐 ${data.planets.length.toLocaleString()} Planetas</span>
             <span>🛡️ ${data.alliances.size.toLocaleString()} Alianzas</span>
-            <span>⚡ Vel x${data.serverData?.speed || 1}</span>
+            <span>⚡ Vel Flota x${data.serverData?.speedFleetWar || data.serverData?.speedFleet || 1}</span>
           </div>
         </div>
-        <div>
-          <button type="button" class="btn btn-secondary text-xs px-2 py-1" data-remove="${uniKey}">✖</button>
+        <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5 bg-slate-900 border border-slate-700 px-2 py-1 rounded">
+            <label class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Tipo:</label>
+            <select class="change-role-select bg-slate-950 text-xs rounded px-2 py-1 font-bold cursor-pointer ${isDest ? 'text-cyan-400 border border-cyan-500/50' : 'text-amber-400 border border-amber-500/50'}" data-unikey="${uniKey}">
+              <option value="destination" ${isDest ? 'selected' : ''}>★ Destino (Anfitrión)</option>
+              <option value="exodus" ${!isDest ? 'selected' : ''}>Éxodo (Migrante)</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-secondary text-xs px-2 py-1" data-remove="${uniKey}" title="Eliminar universo">✖</button>
         </div>
       `;
+
+      card.querySelector(`.change-role-select[data-unikey="${uniKey}"]`).addEventListener('change', async (e) => {
+        await this.updateUniverseRole(uniKey, e.target.value);
+      });
 
       card.querySelector(`[data-remove="${uniKey}"]`).addEventListener('click', async () => {
         this.loadedUniverses.delete(uniKey);
@@ -610,6 +629,40 @@ class OgameMergerApp {
     }
 
     this.dom.universesList.appendChild(frag);
+  }
+
+  async updateUniverseRole(uniKey, newRole) {
+    const data = this.loadedUniverses.get(uniKey);
+    if (!data) return;
+
+    data.role = newRole;
+    if (data.serverData) {
+      data.serverData.role = newRole;
+    }
+
+    if (data.players) {
+      for (const player of data.players.values()) {
+        player.role = newRole;
+      }
+    }
+
+    if (data.planets) {
+      for (const planet of data.planets) {
+        planet.role = newRole;
+      }
+    }
+
+    // Persist changes to IndexedDB
+    await this.storage.saveUniverse(data);
+
+    // Refresh UI lists
+    this.renderUniversesList();
+    this.ingestController.refreshSavedUniversesList();
+
+    // If a merge simulation was already performed, re-execute immediately
+    if (this.mergedResult) {
+      this.executeSimulation();
+    }
   }
 
   updateMergeActionState() {
