@@ -184,7 +184,15 @@ class OgameMergerApp {
       resetSessionBtn: document.getElementById('resetSessionBtn'),
       importJsonInput: document.getElementById('importJsonInput'),
       importJsonTabInput: document.getElementById('importJsonTabInput'),
-      importTabStatus: document.getElementById('importTabStatus')
+      importTabStatus: document.getElementById('importTabStatus'),
+
+      // Slot Detail Modal
+      slotDetailModal: document.getElementById('slotDetailModal'),
+      modalSlotTitle: document.getElementById('modalSlotTitle'),
+      modalSlotSubtitle: document.getElementById('modalSlotSubtitle'),
+      modalSlotBody: document.getElementById('modalSlotBody'),
+      closeSlotModalBtn: document.getElementById('closeSlotModalBtn'),
+      closeSlotModalBtnBottom: document.getElementById('closeSlotModalBtnBottom')
     };
   }
 
@@ -438,6 +446,26 @@ class OgameMergerApp {
         e.target.value = '';
       });
     }
+
+    // Modal listeners
+    if (this.dom.closeSlotModalBtn) {
+      this.dom.closeSlotModalBtn.addEventListener('click', () => this.closeSlotModal());
+    }
+    if (this.dom.closeSlotModalBtnBottom) {
+      this.dom.closeSlotModalBtnBottom.addEventListener('click', () => this.closeSlotModal());
+    }
+    if (this.dom.slotDetailModal) {
+      this.dom.slotDetailModal.addEventListener('click', (e) => {
+        if (e.target === this.dom.slotDetailModal) {
+          this.closeSlotModal();
+        }
+      });
+    }
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.dom.slotDetailModal && !this.dom.slotDetailModal.classList.contains('hidden')) {
+        this.closeSlotModal();
+      }
+    });
   }
 
   renderMigrationGroupDetails(groupId) {
@@ -876,28 +904,76 @@ class OgameMergerApp {
     this.dom.highscoreTableBody.appendChild(frag);
   }
 
+  getSlotPlanets(curG, curS, pos) {
+    const coordKey = `${curG}:${curS}:${pos}`;
+    if (!this.mergedResult || !this.mergedResult.planets) return [];
+
+    // All planets that originally belonged to this coordinate
+    const origPlanets = this.mergedResult.planets.filter(pl => pl.originalCoords === coordKey);
+
+    // All planets currently situated at this coordinate
+    const currentPlanets = this.mergedResult.planets.filter(
+      pl => (pl.coords?.raw === coordKey) || 
+            (pl.coords?.g === curG && pl.coords?.s === curS && pl.coords?.p === pos)
+    );
+
+    // If 2 or more planets clashed originally at this coordinate
+    if (origPlanets.length > 1) {
+      // Sort: retained (winner) first, then displaced by total score descending
+      return [...origPlanets].sort((a, b) => {
+        if (a.retained && !b.retained) return -1;
+        if (!a.retained && b.retained) return 1;
+        const scoreA = this.mergedResult.players.get(a.playerId)?.scores?.total || 0;
+        const scoreB = this.mergedResult.players.get(b.playerId)?.scores?.total || 0;
+        return scoreB - scoreA;
+      });
+    }
+
+    // If multiple planets are currently located here (e.g. edge case or imported dataset)
+    if (currentPlanets.length > 1) {
+      return currentPlanets;
+    }
+
+    // Single planet currently located here
+    if (currentPlanets.length === 1) {
+      return currentPlanets;
+    }
+
+    // Single planet originally here (if any)
+    if (origPlanets.length === 1) {
+      return origPlanets;
+    }
+
+    return [];
+  }
+
   renderGalaxySystem() {
     const curG = this.galaxyState.galaxy;
     const curS = this.galaxyState.system;
 
-    const planetsInSys = this.mergedResult.planets.filter(
-      pl => pl.coords.g === curG && pl.coords.s === curS
-    );
+    let totalOccupants = 0;
+    let collisionsCount = 0;
+    const slotPlanetsMap = new Map();
 
-    const slotMap = new Map();
-    for (const pl of planetsInSys) {
-      slotMap.set(pl.coords.p, pl);
+    for (let pos = 1; pos <= 15; pos++) {
+      const planetsInSlot = this.getSlotPlanets(curG, curS, pos);
+      slotPlanetsMap.set(pos, planetsInSlot);
+      if (planetsInSlot.length > 0) totalOccupants++;
+      if (planetsInSlot.length > 1) collisionsCount++;
     }
 
-    this.dom.galaxySysSummary.textContent = `Ocupación: ${planetsInSys.length} / 15 slots`;
+    const collisionText = collisionsCount > 0 
+      ? ` · <span style="color: var(--accent-orange); font-weight: 700;">⚔️ ${collisionsCount} coordenada(s) con colisión</span>`
+      : '';
+    this.dom.galaxySysSummary.innerHTML = `Ocupación: ${totalOccupants} / 15 slots${collisionText}`;
 
     const frag = document.createDocumentFragment();
 
     for (let pos = 1; pos <= 15; pos++) {
+      const planetsInSlot = slotPlanetsMap.get(pos) || [];
       const card = document.createElement('div');
-      const pl = slotMap.get(pos);
 
-      if (!pl) {
+      if (planetsInSlot.length === 0) {
         card.className = 'slot-card empty';
         card.innerHTML = `
           <div class="slot-header">
@@ -906,90 +982,58 @@ class OgameMergerApp {
           </div>
           <div class="slot-planet-name" style="color: var(--text-muted);">Slot Disponible</div>
         `;
-      } else {
-        const owner = this.mergedResult.players.get(pl.playerId);
-        const ownerName = owner ? (owner.displayName || owner.name) : 'Desconocido';
-        const roleTag = pl.role === 'destination' ? '★ Destino' : 'Éxodo';
-        const ownerUni = `${roleTag} ${pl.uniKey.replace('_', ' #').toUpperCase()}`;
-
-        const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
-        const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem; margin-left: 0.35rem;">${speedLight.label}</span>`;
-
-        let statusPills = '';
-        if (owner?.status?.includes('v')) statusPills += '<span class="player-status-tag tag-v">v</span>';
-        if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">i</span>';
-        if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">renombrado</span>';
-
-        // Recalculated rankings and scores in merged universe
-        const ranks = owner?.mergedRanks || {};
-        const scores = owner?.scores || {};
-        const rankTotalNum = ranks.total ? `${ranks.total.toLocaleString()}` : '-';
-        const rankMilNum = ranks.military ? `${ranks.military.toLocaleString()}` : '-';
-        const rankEcoNum = ranks.economy ? `${ranks.economy.toLocaleString()}` : '-';
-        const rankResNum = ranks.research ? `${ranks.research.toLocaleString()}` : '-';
-
-        const scoreTotal = (scores.total || 0).toLocaleString();
-        const scoreMil = (scores.military || 0).toLocaleString();
-        const scoreEco = (scores.economy || 0).toLocaleString();
-        const scoreRes = (scores.research || 0).toLocaleString();
-
+      } else if (planetsInSlot.length === 1) {
+        const pl = planetsInSlot[0];
         let stateClass = '';
-        let badgeHtml = '';
-
         if (pl.relocated) {
           stateClass = 'collision-relocated';
-          badgeHtml = `<span style="font-size: 0.68rem; color: var(--accent-orange); font-family: var(--font-mono);">⚡ Reubicado (Orig: ${pl.originalCoords})</span>`;
         } else if (pl.hasCollision && pl.retained) {
           stateClass = 'collision-retained';
-          badgeHtml = '<span style="font-size: 0.68rem; color: var(--accent-green); font-family: var(--font-mono);">🛡️ Retenido</span>';
         }
 
-        const moonHtml = pl.moon 
-          ? `<span class="slot-moon-badge">🌕 Luna (${pl.moon.size}km)</span>` 
-          : '';
+        card.className = `slot-card interactive ${stateClass}`;
+        card.setAttribute('title', `Click para ver detalles de la coordenada [${curG}:${curS}:${pos}]`);
 
-        card.className = `slot-card ${stateClass}`;
         card.innerHTML = `
           <div class="slot-header">
-            <span style="color: var(--accent-cyan);">[${curG}:${curS}:${pos}]</span>
-            <span>${moonHtml}</span>
-          </div>
-          <div class="slot-planet-name">
-            <span>🪐</span> ${this.escapeHtml(pl.name)}
-          </div>
-          <div class="slot-player-info">
-            <div style="display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;">
-              <span>Comandante:</span>
-              <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong>
-              ${statusPills}
-            </div>
-            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; margin-top: 0.15rem;">
-              <span>${ownerUni}</span>
-              ${speedPill}
+            <span style="color: var(--accent-cyan); font-weight: 700;">[${curG}:${curS}:${pos}]</span>
+            <div style="display: flex; align-items: center; gap: 0.35rem;">
+              ${pl.moon ? `<span class="slot-moon-badge">🌕 Luna (${pl.moon.size}km)</span>` : ''}
+              <span class="collision-action-hint">🔍 Detalle</span>
             </div>
           </div>
-          <div>${badgeHtml}</div>
+          ${this.renderPlanetInnerContent(pl, curG, curS, pos)}
+        `;
 
-          <!-- Clasificación y Puntuación Unificada del Jugador -->
-          <div class="slot-ranks-grid" style="display: flex; flex-direction: column; gap: 0.25rem; font-family: var(--font-mono); font-size: 0.72rem; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Total: Lugar ${rankTotalNum} (${scoreTotal} puntos)">
-              <span>🏆 <span style="color: var(--text-muted);">Total:</span> <strong style="color: #fff;">Lugar ${rankTotalNum}</strong></span>
-              <span style="color: var(--text-muted); font-size: 0.68rem;">(${scoreTotal} pts)</span>
+        card.addEventListener('click', () => {
+          this.openSlotModal(curG, curS, pos);
+        });
+      } else {
+        // Multiple overlapping planets in this coordinate!
+        card.className = 'slot-card slot-card-collision';
+        card.setAttribute('title', `Click para ver comparativa completa de los ${planetsInSlot.length} planetas coincidentes`);
+
+        let nestedCellsHtml = '';
+        for (let i = 0; i < planetsInSlot.length; i++) {
+          nestedCellsHtml += this.renderNestedPlanetSubCard(planetsInSlot[i], i + 1, planetsInSlot.length, curG, curS, pos);
+        }
+
+        card.innerHTML = `
+          <div class="slot-header" style="border-bottom: 1px solid rgba(255, 157, 0, 0.25); padding-bottom: 0.35rem; margin-bottom: 0.25rem;">
+            <span style="color: var(--accent-cyan); font-weight: 700;">[${curG}:${curS}:${pos}]</span>
+            <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+              <span class="collision-pill-badge">⚔️ ${planetsInSlot.length} Coincidentes</span>
+              <span class="collision-action-hint">🔍 Ver Comparativa</span>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Flota: Lugar ${rankMilNum} (${scoreMil} puntos)">
-              <span>⚔️ <span style="color: var(--accent-orange);">Flota:</span> <strong style="color: var(--accent-orange);">Lugar ${rankMilNum}</strong></span>
-              <span style="color: rgba(255, 157, 0, 0.85); font-size: 0.68rem;">(${scoreMil} pts)</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Economía: Lugar ${rankEcoNum} (${scoreEco} puntos)">
-              <span>🪙 <span style="color: #fbbf24;">Eco:</span> <strong style="color: #fbbf24;">Lugar ${rankEcoNum}</strong></span>
-              <span style="color: rgba(251, 191, 36, 0.85); font-size: 0.68rem;">(${scoreEco} pts)</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Investigación: Lugar ${rankResNum} (${scoreRes} puntos)">
-              <span>🔬 <span style="color: var(--accent-cyan);">Inv:</span> <strong style="color: var(--accent-cyan);">Lugar ${rankResNum}</strong></span>
-              <span style="color: rgba(0, 240, 255, 0.85); font-size: 0.68rem;">(${scoreRes} pts)</span>
-            </div>
+          </div>
+          <div class="slot-nested-cells">
+            ${nestedCellsHtml}
           </div>
         `;
+
+        card.addEventListener('click', () => {
+          this.openSlotModal(curG, curS, pos);
+        });
       }
 
       frag.appendChild(card);
@@ -997,6 +1041,276 @@ class OgameMergerApp {
 
     this.dom.systemSlotsGrid.innerHTML = '';
     this.dom.systemSlotsGrid.appendChild(frag);
+  }
+
+  renderNestedPlanetSubCard(pl, index, total, curG, curS, pos) {
+    const owner = this.mergedResult.players.get(pl.playerId);
+    const ownerName = owner ? (owner.displayName || owner.name) : 'Desconocido';
+    const roleTag = pl.role === 'destination' ? '★ Destino' : 'Éxodo';
+    const ownerUni = `${roleTag} ${pl.uniKey.replace('_', ' #').toUpperCase()}`;
+
+    const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+    const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem; margin-left: 0.35rem;">${speedLight.label}</span>`;
+
+    let statusPills = '';
+    if (owner?.status?.includes('v')) statusPills += '<span class="player-status-tag tag-v">v</span>';
+    if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">i</span>';
+    if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">renombrado</span>';
+
+    const isRetained = pl.retained;
+    const borderClass = isRetained ? 'is-retained' : 'is-relocated';
+    
+    let resolutionBadge = '';
+    if (isRetained) {
+      resolutionBadge = `<span style="font-size: 0.68rem; font-weight: 700; color: var(--accent-green); background: rgba(0,255,136,0.12); padding: 0.1rem 0.35rem; border-radius: 3px; border: 1px solid rgba(0,255,136,0.3);">🛡️ Retenido [${pl.coords?.raw || `${curG}:${curS}:${pos}`}]</span>`;
+    } else {
+      const targetStr = pl.targetCoords || pl.coords?.raw || 'Pendiente';
+      resolutionBadge = `<span style="font-size: 0.68rem; font-weight: 700; color: var(--accent-orange); background: rgba(255,157,0,0.12); padding: 0.1rem 0.35rem; border-radius: 3px; border: 1px solid rgba(255,157,0,0.3);">⚡ Reubicado ➔ [${targetStr}]</span>`;
+    }
+
+    const moonHtml = pl.moon 
+      ? `<span class="slot-moon-badge" style="font-size: 0.65rem; padding: 0.08rem 0.25rem;">🌕 Luna (${pl.moon.size}km)</span>` 
+      : '';
+
+    return `
+      <div class="nested-planet-card ${borderClass}">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.25rem;">
+          ${resolutionBadge}
+          ${moonHtml}
+        </div>
+        <div class="slot-planet-name" style="font-size: 0.82rem;">
+          <span>🪐</span> <strong style="color: #fff;">${this.escapeHtml(pl.name)}</strong>
+        </div>
+        <div class="slot-player-info" style="font-size: 0.76rem;">
+          <div style="display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;">
+            <span>Comandante:</span>
+            <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong>
+            ${statusPills}
+          </div>
+          <div style="font-size: 0.72rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; margin-top: 0.1rem;">
+            <span>${ownerUni}</span>
+            ${speedPill}
+          </div>
+        </div>
+        ${this.renderPlayerRanksHtml(owner)}
+      </div>
+    `;
+  }
+
+  renderPlanetInnerContent(pl, curG, curS, pos) {
+    const owner = this.mergedResult.players.get(pl.playerId);
+    const ownerName = owner ? (owner.displayName || owner.name) : 'Desconocido';
+    const roleTag = pl.role === 'destination' ? '★ Destino' : 'Éxodo';
+    const ownerUni = `${roleTag} ${pl.uniKey.replace('_', ' #').toUpperCase()}`;
+
+    const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+    const speedPill = `<span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.08rem 0.35rem; margin-left: 0.35rem;">${speedLight.label}</span>`;
+
+    let statusPills = '';
+    if (owner?.status?.includes('v')) statusPills += '<span class="player-status-tag tag-v">v</span>';
+    if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">i</span>';
+    if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">renombrado</span>';
+
+    let badgeHtml = '';
+    if (pl.relocated) {
+      badgeHtml = `<span style="font-size: 0.68rem; color: var(--accent-orange); font-family: var(--font-mono);">⚡ Reubicado (Orig: ${pl.originalCoords})</span>`;
+    } else if (pl.hasCollision && pl.retained) {
+      badgeHtml = '<span style="font-size: 0.68rem; color: var(--accent-green); font-family: var(--font-mono);">🛡️ Retenido</span>';
+    }
+
+    return `
+      <div class="slot-planet-name">
+        <span>🪐</span> ${this.escapeHtml(pl.name)}
+      </div>
+      <div class="slot-player-info">
+        <div style="display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;">
+          <span>Comandante:</span>
+          <strong style="color: #fff;">${this.escapeHtml(ownerName)}</strong>
+          ${statusPills}
+        </div>
+        <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; align-items: center; margin-top: 0.15rem;">
+          <span>${ownerUni}</span>
+          ${speedPill}
+        </div>
+      </div>
+      <div>${badgeHtml}</div>
+      ${this.renderPlayerRanksHtml(owner)}
+    `;
+  }
+
+  renderPlayerRanksHtml(owner) {
+    const ranks = owner?.mergedRanks || {};
+    const scores = owner?.scores || {};
+    const rankTotalNum = ranks.total ? `${ranks.total.toLocaleString()}` : '-';
+    const rankMilNum = ranks.military ? `${ranks.military.toLocaleString()}` : '-';
+    const rankEcoNum = ranks.economy ? `${ranks.economy.toLocaleString()}` : '-';
+    const rankResNum = ranks.research ? `${ranks.research.toLocaleString()}` : '-';
+
+    const scoreTotal = (scores.total || 0).toLocaleString();
+    const scoreMil = (scores.military || 0).toLocaleString();
+    const scoreEco = (scores.economy || 0).toLocaleString();
+    const scoreRes = (scores.research || 0).toLocaleString();
+
+    return `
+      <div class="slot-ranks-grid" style="display: flex; flex-direction: column; gap: 0.25rem; font-family: var(--font-mono); font-size: 0.72rem; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Total: Lugar ${rankTotalNum} (${scoreTotal} puntos)">
+          <span>🏆 <span style="color: var(--text-muted);">Total:</span> <strong style="color: #fff;">Lugar ${rankTotalNum}</strong></span>
+          <span style="color: var(--text-muted); font-size: 0.68rem;">(${scoreTotal} pts)</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Flota: Lugar ${rankMilNum} (${scoreMil} puntos)">
+          <span>⚔️ <span style="color: var(--accent-orange);">Flota:</span> <strong style="color: var(--accent-orange);">Lugar ${rankMilNum}</strong></span>
+          <span style="color: rgba(255, 157, 0, 0.85); font-size: 0.68rem;">(${scoreMil} pts)</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Economía: Lugar ${rankEcoNum} (${scoreEco} puntos)">
+          <span>🪙 <span style="color: #fbbf24;">Eco:</span> <strong style="color: #fbbf24;">Lugar ${rankEcoNum}</strong></span>
+          <span style="color: rgba(251, 191, 36, 0.85); font-size: 0.68rem;">(${scoreEco} pts)</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Investigación: Lugar ${rankResNum} (${scoreRes} puntos)">
+          <span>🔬 <span style="color: var(--accent-cyan);">Inv:</span> <strong style="color: var(--accent-cyan);">Lugar ${rankResNum}</strong></span>
+          <span style="color: rgba(0, 240, 255, 0.85); font-size: 0.68rem;">(${scoreRes} pts)</span>
+        </div>
+      </div>
+    `;
+  }
+
+  openSlotModal(curG, curS, pos) {
+    if (!this.dom.slotDetailModal) return;
+    const planets = this.getSlotPlanets(curG, curS, pos);
+    if (!planets || planets.length === 0) return;
+
+    const coordStr = `[${curG}:${curS}:${pos}]`;
+    this.dom.modalSlotTitle.textContent = `Coordenada Galáctica ${coordStr}`;
+
+    const isCollision = planets.length > 1;
+    if (isCollision) {
+      this.dom.modalSlotSubtitle.innerHTML = `<span class="text-amber-400 font-bold">⚠️ ${planets.length} Planetas Coincidentes</span> · Conflicto Resuelto en Fusión`;
+    } else {
+      this.dom.modalSlotSubtitle.innerHTML = `<span class="text-cyan-400 font-bold">1 Planeta Asignado</span> · Información Detallada`;
+    }
+
+    let bodyHtml = '';
+
+    if (isCollision) {
+      const winner = planets.find(p => p.retained) || planets[0];
+      const winnerOwner = this.mergedResult.players.get(winner.playerId);
+      const winnerName = winnerOwner?.displayName || winnerOwner?.name || 'Desconocido';
+      const winnerUni = `${winner.role === 'destination' ? '★ Destino' : 'Éxodo'} ${winner.uniKey.replace('_', ' #').toUpperCase()}`;
+      const reason = winner.role === 'destination' ? 'Prioridad de Servidor Anfitrión (★ Destino)' : 'Mayor Puntuación Total';
+
+      bodyHtml += `
+        <div class="bg-amber-500/10 border border-amber-500/40 p-3 rounded-md text-xs text-amber-200 leading-relaxed flex flex-col gap-1.5">
+          <div class="flex items-center gap-1.5 font-bold text-amber-300">
+            <span>⚠️</span> <span>Detalle de Colisión de Coordenadas:</span>
+          </div>
+          <div>
+            ${planets.length} planetas de distintos servidores reclamaban la coordenada <strong>${coordStr}</strong>.
+            La posición oficial fue <strong>retenida</strong> por <strong class="text-white">${this.escapeHtml(winnerName)}</strong> (${winnerUni}) debido a <em>${reason}</em>.
+            Los planetas restantes fueron reubicados automáticamente a slots libres próximos.
+          </div>
+        </div>
+      `;
+    }
+
+    bodyHtml += `<div class="grid grid-cols-1 ${planets.length > 1 ? 'md:grid-cols-2' : ''} gap-4">`;
+
+    for (let i = 0; i < planets.length; i++) {
+      const pl = planets[i];
+      const owner = this.mergedResult.players.get(pl.playerId);
+      const ownerName = owner ? (owner.displayName || owner.name) : 'Desconocido';
+      const origName = owner?.originalName && owner.originalName !== owner.name ? owner.originalName : null;
+      const isRetained = pl.retained;
+
+      let allianceName = 'Sin Alianza';
+      if (owner?.allianceId && this.mergedResult.alliances.has(owner.allianceId)) {
+        const all = this.mergedResult.alliances.get(owner.allianceId);
+        allianceName = `[${all.displayTag || all.tag}] ${all.name}`;
+      }
+
+      const roleBadge = pl.role === 'destination' 
+        ? '<span class="text-cyan-400 font-bold">[★ SERVIDOR DESTINO ANFITRIÓN]</span>'
+        : '<span class="text-amber-400 font-bold">[SERVIDOR ÉXODO MIGRANTE]</span>';
+
+      const speedLight = pl.speedTrafficLight || owner?.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+
+      const ranks = owner?.mergedRanks || {};
+      const scores = owner?.scores || {};
+      const ships = (owner?.ships || 0).toLocaleString();
+
+      const moonInfo = pl.moon 
+        ? `<div class="text-xs text-amber-400 font-mono flex items-center gap-1"><span>🌕</span> Luna Orbital: <strong>${pl.moon.size.toLocaleString()} km</strong></div>`
+        : '<div class="text-xs text-slate-500 italic">Sin luna orbital</div>';
+
+      const cardStyle = isRetained ? 'modal-card retained' : 'modal-card displaced';
+
+      let statusPills = '';
+      if (owner?.status?.includes('v')) statusPills += '<span class="player-status-tag tag-v">Modo Vacaciones</span>';
+      if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">Inactivo</span>';
+      if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">Nick Renombrado</span>';
+
+      bodyHtml += `
+        <div class="${cardStyle}">
+          <div class="flex items-center justify-between border-b border-slate-700/60 pb-2">
+            <span class="font-bold text-xs uppercase tracking-wider ${isRetained ? 'text-emerald-400' : 'text-amber-400'}">
+              ${isRetained ? '🛡️ Planeta Retenido (Ganador)' : `⚡ Planeta Reubicado ➔ [${pl.targetCoords || pl.coords?.raw}]`}
+            </span>
+            <span class="text-[11px] font-mono text-slate-400">Orig: ${pl.originalCoords || coordStr}</span>
+          </div>
+
+          <div class="flex flex-col gap-1">
+            <div class="text-sm font-bold text-white flex items-center gap-1.5">
+              <span>🪐</span> <span>${this.escapeHtml(pl.name)}</span>
+            </div>
+            ${moonInfo}
+          </div>
+
+          <div class="bg-slate-950/60 p-2.5 rounded border border-slate-800 flex flex-col gap-1 text-xs">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-slate-400">Comandante:</span>
+              <strong class="text-white">${this.escapeHtml(ownerName)}</strong>
+              ${statusPills}
+            </div>
+            ${origName ? `<div class="text-[11px] text-amber-300">Nombre original en origen: <strong>${this.escapeHtml(origName)}</strong></div>` : ''}
+            <div class="text-slate-400">Alianza: <strong class="text-cyan-300 font-mono">${this.escapeHtml(allianceName)}</strong></div>
+            <div class="flex items-center justify-between pt-1 mt-1 border-t border-slate-800/80">
+              <span class="text-[11px] font-mono">${roleBadge} ${pl.uniKey.replace('_', ' #').toUpperCase()}</span>
+              <span class="badge-speed ${speedLight.badgeClass}">${speedLight.label} Flota</span>
+            </div>
+          </div>
+
+          <!-- Puntuaciones y Clasificación Unificada -->
+          <div class="flex flex-col gap-1 font-mono text-xs pt-1">
+            <div class="flex justify-between items-center bg-slate-900/80 px-2 py-1 rounded">
+              <span>🏆 <span class="text-slate-400">Total:</span> <strong>Lugar ${ranks.total ? ranks.total.toLocaleString() : '-'}</strong></span>
+              <span class="text-slate-300 font-bold">${(scores.total || 0).toLocaleString()} pts</span>
+            </div>
+            <div class="flex justify-between items-center bg-slate-900/80 px-2 py-1 rounded">
+              <span>⚔️ <span class="text-amber-400">Flota:</span> <strong class="text-amber-400">Lugar ${ranks.military ? ranks.military.toLocaleString() : '-'}</strong></span>
+              <span class="text-amber-300 font-bold">${(scores.military || 0).toLocaleString()} pts (${ships} naves)</span>
+            </div>
+            <div class="flex justify-between items-center bg-slate-900/80 px-2 py-1 rounded">
+              <span>🪙 <span class="text-amber-300">Economía:</span> <strong class="text-amber-300">Lugar ${ranks.economy ? ranks.economy.toLocaleString() : '-'}</strong></span>
+              <span class="text-amber-200 font-bold">${(scores.economy || 0).toLocaleString()} pts</span>
+            </div>
+            <div class="flex justify-between items-center bg-slate-900/80 px-2 py-1 rounded">
+              <span>🔬 <span class="text-cyan-400">Investigación:</span> <strong class="text-cyan-400">Lugar ${ranks.research ? ranks.research.toLocaleString() : '-'}</strong></span>
+              <span class="text-cyan-300 font-bold">${(scores.research || 0).toLocaleString()} pts</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    bodyHtml += '</div>';
+
+    this.dom.modalSlotBody.innerHTML = bodyHtml;
+    this.dom.slotDetailModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  closeSlotModal() {
+    if (!this.dom.slotDetailModal) return;
+    this.dom.slotDetailModal.classList.add('hidden');
+    document.body.style.overflow = '';
   }
 
   renderConflictsView() {
