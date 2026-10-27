@@ -841,12 +841,18 @@ class OgameMergerApp {
         if (owner?.status?.includes('i') || owner?.status?.includes('I')) statusPills += '<span class="player-status-tag tag-i">i</span>';
         if (owner?.collisionName) statusPills += '<span class="player-status-tag tag-collision">renombrado</span>';
 
-        // Recalculated rankings in merged universe
+        // Recalculated rankings and scores in merged universe
         const ranks = owner?.mergedRanks || {};
-        const rankTotalStr = ranks.total ? `#${ranks.total.toLocaleString()}` : '-';
-        const rankMilStr = ranks.military ? `#${ranks.military.toLocaleString()}` : '-';
-        const rankEcoStr = ranks.economy ? `#${ranks.economy.toLocaleString()}` : '-';
-        const rankResStr = ranks.research ? `#${ranks.research.toLocaleString()}` : '-';
+        const scores = owner?.scores || {};
+        const rankTotalNum = ranks.total ? `${ranks.total.toLocaleString()}` : '-';
+        const rankMilNum = ranks.military ? `${ranks.military.toLocaleString()}` : '-';
+        const rankEcoNum = ranks.economy ? `${ranks.economy.toLocaleString()}` : '-';
+        const rankResNum = ranks.research ? `${ranks.research.toLocaleString()}` : '-';
+
+        const scoreTotal = (scores.total || 0).toLocaleString();
+        const scoreMil = (scores.military || 0).toLocaleString();
+        const scoreEco = (scores.economy || 0).toLocaleString();
+        const scoreRes = (scores.research || 0).toLocaleString();
 
         let stateClass = '';
         let badgeHtml = '';
@@ -885,23 +891,23 @@ class OgameMergerApp {
           </div>
           <div>${badgeHtml}</div>
 
-          <!-- Clasificación Unificada del Jugador -->
-          <div class="slot-ranks-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.3rem; font-family: var(--font-mono); font-size: 0.72rem; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación General / Total">
-              <span style="color: var(--text-muted);">🏆 Total:</span>
-              <span style="color: #fff; font-weight: 700;">${rankTotalStr}</span>
+          <!-- Clasificación y Puntuación Unificada del Jugador -->
+          <div class="slot-ranks-grid" style="display: flex; flex-direction: column; gap: 0.25rem; font-family: var(--font-mono); font-size: 0.72rem; margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Total: Lugar ${rankTotalNum} (${scoreTotal} puntos)">
+              <span>🏆 <span style="color: var(--text-muted);">Total:</span> <strong style="color: #fff;">Lugar ${rankTotalNum}</strong></span>
+              <span style="color: var(--text-muted); font-size: 0.68rem;">(${scoreTotal} pts)</span>
             </div>
-            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación Militar / Flota">
-              <span style="color: var(--accent-orange);">⚔️ Flota:</span>
-              <span style="color: var(--accent-orange); font-weight: 700;">${rankMilStr}</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Flota: Lugar ${rankMilNum} (${scoreMil} puntos)">
+              <span>⚔️ <span style="color: var(--accent-orange);">Flota:</span> <strong style="color: var(--accent-orange);">Lugar ${rankMilNum}</strong></span>
+              <span style="color: rgba(255, 157, 0, 0.85); font-size: 0.68rem;">(${scoreMil} pts)</span>
             </div>
-            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación de Economía">
-              <span style="color: #fbbf24;">🪙 Eco:</span>
-              <span style="color: #fbbf24; font-weight: 700;">${rankEcoStr}</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Economía: Lugar ${rankEcoNum} (${scoreEco} puntos)">
+              <span>🪙 <span style="color: #fbbf24;">Eco:</span> <strong style="color: #fbbf24;">Lugar ${rankEcoNum}</strong></span>
+              <span style="color: rgba(251, 191, 36, 0.85); font-size: 0.68rem;">(${scoreEco} pts)</span>
             </div>
-            <div style="display: flex; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 3px;" title="Nueva Clasificación de Investigación">
-              <span style="color: var(--accent-cyan);">🔬 Inv:</span>
-              <span style="color: var(--accent-cyan); font-weight: 700;">${rankResStr}</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 0.2rem 0.45rem; border-radius: 3px;" title="Investigación: Lugar ${rankResNum} (${scoreRes} puntos)">
+              <span>🔬 <span style="color: var(--accent-cyan);">Inv:</span> <strong style="color: var(--accent-cyan);">Lugar ${rankResNum}</strong></span>
+              <span style="color: rgba(0, 240, 255, 0.85); font-size: 0.68rem;">(${scoreRes} pts)</span>
             </div>
           </div>
         `;
