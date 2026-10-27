@@ -31,34 +31,71 @@
       </div>
     </header>
 
-    <!-- Universe Setup & Progress Section -->
+    <!-- Migration Presets & Universe Setup Section -->
     <section class="panel">
-      <h2 class="panel-title"><span>📡</span> Carga de Universos Oficiales OGame</h2>
+      <h2 class="panel-title"><span>🚀</span> Planes Oficiales de Migración (Éxodo &rarr; Destino)</h2>
+      
+      <!-- Official Groups Selector -->
+      <div class="migration-groups-box" style="margin-bottom: 1.25rem; background: var(--bg-card); padding: 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+          <button type="button" class="btn btn-secondary group-tab-btn active" data-group="1">
+            <span>📋</span> Grupo 1 (157-167 &rarr; 173, 280, 281, 282)
+          </button>
+          <button type="button" class="btn btn-secondary group-tab-btn" data-group="2">
+            <span>📋</span> Grupo 2 (262-272 &rarr; 280, 281, 282)
+          </button>
+          <button type="button" class="btn btn-secondary group-tab-btn" data-group="3">
+            <span>📋</span> Grupo 3 (147-157 &rarr; 161, 280, 281, 282)
+          </button>
+        </div>
+
+        <div id="groupDetailsContainer" style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem; font-size: 0.85rem;">
+          <!-- Populated by app.js -->
+        </div>
+      </div>
+
+      <h2 class="panel-title" style="margin-top: 1rem;"><span>📡</span> Carga Manual de Universos OGame</h2>
       <div class="universe-setup-grid">
         <div class="setup-form-box">
           <form id="addUniverseForm">
             <div class="input-row">
-              <div class="input-field">
-                <label for="communityInput">Comunidad (Idioma)</label>
+              <div class="input-field" style="max-width: 110px;">
+                <label for="communityInput">Comunidad</label>
                 <input type="text" id="communityInput" value="es" placeholder="es, en, de..." maxlength="4" required>
               </div>
-              <div class="input-field">
+              <div class="input-field" style="max-width: 110px;">
                 <label for="uniNumberInput">Nº Universo</label>
-                <input type="number" id="uniNumberInput" value="190" placeholder="190, 195..." min="1" max="999" required>
+                <input type="number" id="uniNumberInput" value="280" placeholder="280, 157..." min="1" max="999" required>
+              </div>
+              <div class="input-field">
+                <label for="uniRoleSelect">Rol en la Fusión</label>
+                <select id="uniRoleSelect">
+                  <option value="destination">★ Destino (Anfitrión)</option>
+                  <option value="exodus" selected>Éxodo (Migrante)</option>
+                </select>
               </div>
             </div>
             <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
               <button type="submit" id="addUniBtn" class="btn btn-primary" style="flex: 1;">
                 <span>➕</span> Cargar Universo XML
               </button>
+              <button type="button" id="loadCommunityListBtn" class="btn btn-secondary" title="Descargar lista oficial de universos desde universes.xml">
+                <span>🌐</span> Ver Universos Oficiales
+              </button>
             </div>
           </form>
 
-          <div class="quick-load-chips">
-            <span style="color: var(--text-muted); font-size: 0.75rem;">Sugerencias:</span>
-            <button type="button" class="chip-btn" data-comm="es" data-unis="190,195">ES 190 + ES 195</button>
-            <button type="button" class="chip-btn" data-comm="es" data-unis="180,185">ES 180 + ES 185</button>
-            <button type="button" class="chip-btn" data-comm="en" data-unis="1,2">EN 1 + EN 2</button>
+          <div id="communityUnisDropdownContainer" class="hidden" style="margin-top: 0.5rem; background: var(--bg-card); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+              <span style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: 600;">Universos disponibles en la comunidad:</span>
+              <button type="button" id="closeCommunityListBtn" style="background: none; border: none; color: var(--text-muted); cursor: pointer;">✖</button>
+            </div>
+            <select id="communityUnisSelect" style="width: 100%; background: var(--bg-panel); color: #fff; padding: 0.4rem; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.82rem;">
+              <!-- Populated dynamically via universes.xml -->
+            </select>
+            <button type="button" id="selectCommunityUniBtn" class="btn btn-secondary" style="width: 100%; margin-top: 0.4rem; padding: 0.3rem;">
+              Seleccionar este universo
+            </button>
           </div>
         </div>
 
@@ -66,7 +103,7 @@
           <div id="universesList" class="universes-list">
             <!-- Dynamic cards populated by app.js -->
             <p id="emptyUniPlaceholder" style="color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 1rem 0;">
-              No hay universos cargados. Agrega al menos 2 servidores para iniciar la simulación de fusión.
+              No hay universos cargados. Selecciona un plan de migración arriba o añade manualmente al menos 2 servidores.
             </p>
           </div>
         </div>
@@ -144,8 +181,8 @@
             Reglas de Resolución Aplicadas en la Fusión
           </h3>
           <ul style="color: var(--text-muted); font-size: 0.85rem; line-height: 1.7; padding-left: 1.25rem;">
-            <li><strong style="color: var(--text-main);">Prioridad de Coordenadas:</strong> Si dos planetas colisionan en <code>[G:S:P]</code>, el jugador con mayor puntuación Total conserva la posición original. El planeta desplazado se reubica al slot desocupado más cercano en el mismo sistema o galaxia. Las lunas se mueven automáticamente con su planeta.</li>
-            <li><strong style="color: var(--text-main);">Colisión de Nicks:</strong> Si varios jugadores comparten el mismo nombre exacto, el de mayor puntaje mantiene el nick; los demás reciben sufijo <code>_U{servidor}</code>.</li>
+            <li><strong style="color: var(--text-main);">Prioridad de Coordenadas:</strong> Si un planeta del universo <em>Destino (Anfitrión)</em> colisiona con uno de un universo <em>Éxodo (Migrante)</em>, el servidor anfitrión retiene su coordenada original. Si ambos planetas tienen el mismo rol, el jugador con mayor puntuación Total conserva la posición. El planeta desplazado se reubica al slot desocupado más cercano en el mismo sistema o galaxia. Las lunas se desplazan conjuntamente con su planeta.</li>
+            <li><strong style="color: var(--text-main);">Colisión de Nicks:</strong> El residente del servidor anfitrión conserva su nombre original; si ambos son migrantes, el de mayor puntaje mantiene el nick y los demás reciben el sufijo <code>_U{servidor}</code>.</li>
             <li><strong style="color: var(--text-main);">Delta Rank:</strong> Muestra la variación exacta de posición respecto al universo de origen (<code>Posición Original - Posición Fusionada</code>).</li>
           </ul>
         </div>
@@ -154,17 +191,21 @@
       <!-- TAB 2: Unified Highscore -->
       <section id="tabHighscore" class="tab-content hidden" style="padding-top: 1.25rem;">
         <div class="filter-bar">
-          <div class="input-field" style="max-width: 180px;">
-            <label for="hsCategorySelect">Categoría</label>
+          <div class="input-field" style="max-width: 220px;">
+            <label for="hsCategorySelect">Categoría Highscore Oficial</label>
             <select id="hsCategorySelect">
-              <option value="total">Total General</option>
-              <option value="economy">Economía</option>
-              <option value="research">Investigación</option>
-              <option value="military">Militar</option>
+              <option value="total">0: Total General</option>
+              <option value="economy">1: Economía</option>
+              <option value="research">2: Investigación</option>
+              <option value="military">3: Militar General</option>
+              <option value="militaryBuilt">5: Militar Construido</option>
+              <option value="militaryDestroyed">6: Militar Destruido</option>
+              <option value="militaryLost">4: Militar Perdido</option>
+              <option value="honor">7: Puntos de Honor</option>
             </select>
           </div>
 
-          <div class="input-field" style="max-width: 180px;">
+          <div class="input-field" style="max-width: 200px;">
             <label for="hsUniverseFilter">Filtrar por Universo</label>
             <select id="hsUniverseFilter">
               <option value="all">Todos los Universos</option>
@@ -185,7 +226,7 @@
                 <th style="width: 80px;">Delta</th>
                 <th>Jugador</th>
                 <th>Alianza</th>
-                <th style="width: 100px;">Uni Origen</th>
+                <th style="width: 120px;">Uni Origen</th>
                 <th style="text-align: right; width: 140px;">Puntos</th>
                 <th style="text-align: right; width: 100px;">Planetas</th>
               </tr>

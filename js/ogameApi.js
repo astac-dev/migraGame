@@ -91,6 +91,25 @@ export class OgameApiClient {
   }
 
   /**
+   * Fetches official list of all universes in a community from universes.xml
+   */
+  async fetchCommunityUniverses(community = 'es') {
+    const cleanComm = community.toLowerCase().trim();
+    const url = `https://s1-${cleanComm}.ogame.gameforge.com/api/universes.xml`;
+    const xmlDoc = await this.fetchXml(url);
+    const uniNodes = xmlDoc.querySelectorAll('universe');
+    const result = [];
+    for (const node of uniNodes) {
+      result.push({
+        id: parseInt(node.getAttribute('id') || '0', 10),
+        name: node.textContent.trim() || `Uni ${node.getAttribute('id')}`,
+        href: node.getAttribute('href') || ''
+      });
+    }
+    return result;
+  }
+
+  /**
    * Parse XML node collections asynchronously in batches to prevent Event Loop locking
    */
   static async *processInBatches(elements, batchSize = 600) {
@@ -109,21 +128,27 @@ export class OgameApiClient {
   /**
    * Fetches complete data suite for an OGame Universe
    */
-  async fetchUniverseData(community, uniNumber, onProgress = () => {}) {
+  async fetchUniverseData(community, uniNumber, role = 'exodus', onProgress = () => {}) {
     const cleanComm = community.toLowerCase().trim();
     const cleanUni = String(uniNumber).trim();
     const uniKey = `${cleanComm}_${cleanUni}`;
     const baseUrl = `https://s${cleanUni}-${cleanComm}.ogame.gameforge.com/api`;
 
+    // Standard official highscore types:
+    // 0: Total, 1: Economy, 2: Research, 3: Military, 4: Military Lost, 5: Military Built, 6: Military Destroyed, 7: Honor
     const endpoints = [
       { key: 'serverData', file: 'serverData.xml', label: 'Datos del Servidor' },
       { key: 'players', file: 'players.xml', label: 'Lista de Jugadores' },
       { key: 'alliances', file: 'alliances.xml', label: 'Lista de Alianzas' },
       { key: 'universe', file: 'universe.xml', label: 'Planetas y Coordenadas' },
-      { key: 'highscoreTotal', file: 'highscore.xml?category=1&type=0', label: 'Highscore Total' },
-      { key: 'highscoreEco', file: 'highscore.xml?category=1&type=1', label: 'Highscore Economía' },
-      { key: 'highscoreRes', file: 'highscore.xml?category=1&type=2', label: 'Highscore Investigación' },
-      { key: 'highscoreMil', file: 'highscore.xml?category=1&type=3', label: 'Highscore Militar' }
+      { key: 'highscoreTotal', file: 'highscore.xml?category=1&type=0', label: 'Highscore Total (0)' },
+      { key: 'highscoreEco', file: 'highscore.xml?category=1&type=1', label: 'Highscore Economía (1)' },
+      { key: 'highscoreRes', file: 'highscore.xml?category=1&type=2', label: 'Highscore Investigación (2)' },
+      { key: 'highscoreMil', file: 'highscore.xml?category=1&type=3', label: 'Highscore Militar (3)' },
+      { key: 'highscoreMilLost', file: 'highscore.xml?category=1&type=4', label: 'Militar Perdido (4)' },
+      { key: 'highscoreMilBuilt', file: 'highscore.xml?category=1&type=5', label: 'Militar Construido (5)' },
+      { key: 'highscoreMilDestroyed', file: 'highscore.xml?category=1&type=6', label: 'Militar Destruido (6)' },
+      { key: 'highscoreHonor', file: 'highscore.xml?category=1&type=7', label: 'Puntos de Honor (7)' }
     ];
 
     const xmlResults = {};
@@ -156,17 +181,18 @@ export class OgameApiClient {
       percent: 100
     });
 
-    const parsedUniverse = await this.parseUniverseDataset(uniKey, cleanComm, cleanUni, xmlResults);
+    const parsedUniverse = await this.parseUniverseDataset(uniKey, cleanComm, cleanUni, role, xmlResults);
     return parsedUniverse;
   }
 
-  async parseUniverseDataset(uniKey, community, uniNumber, xmls) {
+  async parseUniverseDataset(uniKey, community, uniNumber, role, xmls) {
     // 1. Server Data
     const serverNode = xmls.serverData.querySelector('serverData');
     const serverData = {
       name: serverNode?.querySelector('name')?.textContent || `Uni ${uniNumber}`,
       number: uniNumber,
       community: community,
+      role: role, // 'destination' | 'exodus'
       speed: Number(serverNode?.querySelector('speed')?.textContent || 1),
       speedFleet: Number(serverNode?.querySelector('speedFleet')?.textContent || 1),
       galaxies: Number(serverNode?.querySelector('galaxies')?.textContent || 9),
@@ -204,6 +230,7 @@ export class OgameApiClient {
         id: `${uniKey}_p_${id}`,
         originalId: id,
         uniKey,
+        role: role,
         name: node.getAttribute('name') || `Player_${id}`,
         status: node.getAttribute('status') || '',
         allianceId: allianceId ? `${uniKey}_a_${allianceId}` : null,
@@ -211,28 +238,41 @@ export class OgameApiClient {
           total: 0,
           economy: 0,
           research: 0,
-          military: 0
+          military: 0,
+          militaryLost: 0,
+          militaryBuilt: 0,
+          militaryDestroyed: 0,
+          honor: 0
         },
         ranks: {
           total: 0,
           economy: 0,
           research: 0,
-          military: 0
+          military: 0,
+          militaryLost: 0,
+          militaryBuilt: 0,
+          militaryDestroyed: 0,
+          honor: 0
         },
         ships: 0,
         planetsCount: 0
       });
     }
 
-    // 4. Highscores (Total, Eco, Res, Mil)
+    // 4. Highscores (All 8 official types)
     const scoreConfigs = [
       { key: 'total', xml: xmls.highscoreTotal },
       { key: 'economy', xml: xmls.highscoreEco },
       { key: 'research', xml: xmls.highscoreRes },
-      { key: 'military', xml: xmls.highscoreMil }
+      { key: 'military', xml: xmls.highscoreMil },
+      { key: 'militaryLost', xml: xmls.highscoreMilLost },
+      { key: 'militaryBuilt', xml: xmls.highscoreMilBuilt },
+      { key: 'militaryDestroyed', xml: xmls.highscoreMilDestroyed },
+      { key: 'honor', xml: xmls.highscoreHonor }
     ];
 
     for (const sc of scoreConfigs) {
+      if (!sc.xml) continue;
       const entries = sc.xml.querySelectorAll('player');
       for (const entry of entries) {
         const pId = entry.getAttribute('id');
@@ -247,7 +287,7 @@ export class OgameApiClient {
       }
     }
 
-    // 5. Universe (Planets & Moons) - Processed in non-blocking chunks
+    // 5. Universe (Planets & Moons) - Processed in non-blocking batches
     const planets = [];
     const planetNodes = xmls.universe.querySelectorAll('planet');
 
@@ -273,6 +313,7 @@ export class OgameApiClient {
           id: `${uniKey}_pl_${pId}`,
           originalId: pId,
           uniKey,
+          role: role,
           playerId: `${uniKey}_p_${playerId}`,
           originalPlayerId: playerId,
           name: node.getAttribute('name') || 'Colonia',
@@ -298,6 +339,7 @@ export class OgameApiClient {
       uniKey,
       community,
       uniNumber,
+      role,
       serverData,
       alliances,
       players,

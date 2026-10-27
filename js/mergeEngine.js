@@ -2,8 +2,8 @@
  * OGame Universe Merge Engine
  * Handles client-side simulation of universe fusion:
  * - Entity deduplication (players, alliances)
- * - Galactic coordinate collision detection and closest-slot relocation
- * - Unified highscore recalculation and Delta Rank generation
+ * - Galactic coordinate collision detection and closest-slot relocation (Host Destination priority)
+ * - Unified highscore recalculation across all 8 official highscore types (Total, Eco, Res, Mil, MilLost, MilBuilt, MilDestroyed, Honor)
  * - Global density and analytical matrix calculation
  */
 
@@ -39,6 +39,7 @@ export class UniverseMergeEngine {
       for (const [id, player] of u.players.entries()) {
         mergedPlayers.set(player.id, {
           ...player,
+          role: u.role || 'exodus',
           mergedRanks: {},
           deltaRanks: {},
           collisionName: false,
@@ -49,6 +50,7 @@ export class UniverseMergeEngine {
       for (const [id, alliance] of u.alliances.entries()) {
         mergedAlliances.set(alliance.id, {
           ...alliance,
+          role: u.role || 'exodus',
           collisionTag: false,
           displayTag: alliance.tag
         });
@@ -57,6 +59,7 @@ export class UniverseMergeEngine {
       for (const planet of u.planets) {
         rawPlanets.push({
           ...planet,
+          role: u.role || 'exodus',
           hasCollision: false,
           retained: false,
           relocated: false,
@@ -75,7 +78,7 @@ export class UniverseMergeEngine {
     // 3. Resolve Coordinate Collisions & Relocation
     const { planets, coordinateCollisions, occupiedSlots } = this.resolveCoordinateCollisions(rawPlanets, mergedPlayers);
 
-    // 4. Recalculate Highscores & Delta Ranks
+    // 4. Recalculate Highscores & Delta Ranks (All 8 types)
     const highscores = this.recalculateHighscores(mergedPlayers);
 
     // 5. Calculate Density and Analytics Matrix
@@ -90,7 +93,7 @@ export class UniverseMergeEngine {
 
     return {
       destination: {
-        name: `Uni Fusionado (${this.universes.map(u => `U${u.uniNumber}`).join('+')})`,
+        name: `Uni Fusionado (${this.universes.map(u => `${u.role === 'destination' ? '★ Destino:' : 'Éxodo:'} U${u.uniNumber}`).join(' | ')})`,
         galaxies: this.maxGalaxies,
         systems: this.maxSystems,
         slotsPerSystem: this.slotsPerSystem
@@ -122,8 +125,13 @@ export class UniverseMergeEngine {
 
     for (const [name, list] of nameMap.entries()) {
       if (list.length > 1) {
-        // Player with highest total score keeps original name
-        list.sort((a, b) => b.scores.total - a.scores.total);
+        // Priority rule: Destination server resident retains name first; if same role, highest total score
+        list.sort((a, b) => {
+          if (a.role === 'destination' && b.role !== 'destination') return -1;
+          if (b.role === 'destination' && a.role !== 'destination') return 1;
+          return b.scores.total - a.scores.total;
+        });
+
         const keeper = list[0];
 
         for (let i = 1; i < list.length; i++) {
@@ -159,7 +167,12 @@ export class UniverseMergeEngine {
 
     for (const [tag, list] of tagMap.entries()) {
       if (list.length > 1) {
-        list.sort((a, b) => a.name.localeCompare(b.name));
+        list.sort((a, b) => {
+          if (a.role === 'destination' && b.role !== 'destination') return -1;
+          if (b.role === 'destination' && a.role !== 'destination') return 1;
+          return a.name.localeCompare(b.name);
+        });
+
         const keeper = list[0];
 
         for (let i = 1; i < list.length; i++) {
@@ -182,7 +195,8 @@ export class UniverseMergeEngine {
 
   /**
    * Resolves coordinate collisions.
-   * Priority rule: Player with higher total score retains position.
+   * Priority rule: Destination server native planet retains position.
+   * If both are exodus or both are destination, higher total score retains position.
    * Displaced planets relocate to the closest vacant slot within same system or galaxy.
    */
   resolveCoordinateCollisions(rawPlanets, playersMap) {
@@ -209,8 +223,13 @@ export class UniverseMergeEngine {
         occupiedSlots.add(coordKey);
         finalPlanets.push(planet);
       } else {
-        // Sort contestants by owner's total score descending
+        // Sort contestants: Host destination player first, otherwise total score descending
         list.sort((a, b) => {
+          const isDestA = a.role === 'destination';
+          const isDestB = b.role === 'destination';
+          if (isDestA && !isDestB) return -1;
+          if (isDestB && !isDestA) return 1;
+
           const scoreA = playersMap.get(a.playerId)?.scores.total || 0;
           const scoreB = playersMap.get(b.playerId)?.scores.total || 0;
           return scoreB - scoreA;
@@ -258,12 +277,14 @@ export class UniverseMergeEngine {
               id: displaced.playerId,
               name: displacedPlayer?.displayName || displacedPlayer?.name || 'Desconocido',
               uniKey: displaced.uniKey,
+              role: displaced.role,
               score: displacedPlayer?.scores.total || 0
             },
             retainedPlayer: {
               id: winner.playerId,
               name: winnerPlayer?.displayName || winnerPlayer?.name || 'Desconocido',
               uniKey: winner.uniKey,
+              role: winner.role,
               score: winnerPlayer?.scores.total || 0
             }
           });
@@ -291,7 +312,6 @@ export class UniverseMergeEngine {
 
       for (const sys of candidateSystems) {
         if (sys >= 1 && sys <= this.maxSystems) {
-          // In this system, check slots closest to startP (1..15)
           const candidateSlots = this.getRadialSlots(startP, this.slotsPerSystem);
           for (const pos of candidateSlots) {
             const testKey = `${startG}:${sys}:${pos}`;
@@ -303,7 +323,7 @@ export class UniverseMergeEngine {
       }
     }
 
-    // 2. Out of slots in start Galaxy: check adjacent galaxies
+    // 2. Adjacent galaxies
     for (let gDist = 1; gDist < this.maxGalaxies; gDist++) {
       const candidateGalaxies = [startG + gDist, startG - gDist];
 
@@ -336,15 +356,23 @@ export class UniverseMergeEngine {
   }
 
   /**
-   * Recalculates highscores across all merged players and computes Delta Ranks
+   * Recalculates highscores across all merged players and computes Delta Ranks for all 8 categories
    */
   recalculateHighscores(playersMap) {
-    const categories = ['total', 'economy', 'research', 'military'];
+    const categories = [
+      'total',
+      'economy',
+      'research',
+      'military',
+      'militaryLost',
+      'militaryBuilt',
+      'militaryDestroyed',
+      'honor'
+    ];
     const highscoreResults = {};
     const playerArray = Array.from(playersMap.values());
 
     for (const cat of categories) {
-      // Sort players descending by category score
       const sorted = [...playerArray].sort((a, b) => {
         const diff = (b.scores[cat] || 0) - (a.scores[cat] || 0);
         if (diff !== 0) return diff;
@@ -372,6 +400,7 @@ export class UniverseMergeEngine {
           collisionName: player.collisionName,
           allianceId: player.allianceId,
           uniKey: player.uniKey,
+          role: player.role,
           status: player.status,
           score: player.scores[cat] || 0,
           ships: cat === 'military' ? (player.ships || 0) : undefined,
@@ -385,9 +414,6 @@ export class UniverseMergeEngine {
     return highscoreResults;
   }
 
-  /**
-   * Calculate global statistics, occupancy, and system density
-   */
   calculateAnalytics(playersMap, planets, coordCollisions, nickCollisions, tagCollisions, occupiedSlots) {
     let totalPlayers = 0;
     let activePlayers = 0;

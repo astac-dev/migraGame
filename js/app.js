@@ -1,11 +1,79 @@
 import { OgameApiClient } from './ogameApi.js';
 import { UniverseMergeEngine } from './mergeEngine.js';
 
+const MIGRATION_GROUPS = {
+  1: {
+    title: 'Grupo 1 (Universos 157 al 167)',
+    exodus: [
+      { id: 157, name: 'Europa' },
+      { id: 158, name: 'Fenrir' },
+      { id: 159, name: 'Galatea' },
+      { id: 160, name: 'Himalia' },
+      { id: 161, name: 'Indus' },
+      { id: 162, name: 'Janice' },
+      { id: 163, name: 'Kalyke' },
+      { id: 164, name: 'Leda' },
+      { id: 165, name: 'Mensa' },
+      { id: 166, name: 'Norma' },
+      { id: 167, name: 'Octans' }
+    ],
+    destinations: [
+      { id: 173, name: 'Umbra' },
+      { id: 280, name: 'OGame.es Yi-SWAN' },
+      { id: 281, name: 'OGame.es Zhang' },
+      { id: 282, name: 'OGame.es Astrid' }
+    ]
+  },
+  2: {
+    title: 'Grupo 2 (Universos 262 al 272)',
+    exodus: [
+      { id: 262, name: 'Grus' },
+      { id: 264, name: 'Imai' },
+      { id: 265, name: 'Jishui' },
+      { id: 266, name: 'Keid' },
+      { id: 267, name: 'Lyra' },
+      { id: 268, name: 'Mars' },
+      { id: 269, name: 'Nembus' },
+      { id: 270, name: 'Ophiucus' },
+      { id: 271, name: 'Pluto' },
+      { id: 272, name: 'Quasi-Stellar' }
+    ],
+    destinations: [
+      { id: 280, name: 'OGame.es Yi-SWAN' },
+      { id: 281, name: 'OGame.es Zhang' },
+      { id: 282, name: 'OGame.es Astrid' }
+    ]
+  },
+  3: {
+    title: 'Grupo 3 (Universos 147 al 157)',
+    exodus: [
+      { id: 147, name: 'Uriel' },
+      { id: 148, name: 'Virgo' },
+      { id: 149, name: 'Wezn' },
+      { id: 150, name: 'Xanthus' },
+      { id: 151, name: 'Yildun' },
+      { id: 152, name: 'Zibal' },
+      { id: 153, name: 'Aquarius' },
+      { id: 154, name: 'Bellatrix' },
+      { id: 155, name: 'Cosmos' },
+      { id: 156, name: 'Dorado' },
+      { id: 157, name: 'Europa' }
+    ],
+    destinations: [
+      { id: 161, name: 'Indus' },
+      { id: 280, name: 'OGame.es Yi-SWAN' },
+      { id: 281, name: 'OGame.es Zhang' },
+      { id: 282, name: 'OGame.es Astrid' }
+    ]
+  }
+};
+
 class OgameMergerApp {
   constructor() {
     this.apiClient = new OgameApiClient({ proxyType: 'corsproxy' });
     this.loadedUniverses = new Map();
     this.mergedResult = null;
+    this.currentGroup = 1;
     
     this.activeTab = 'tabOverview';
     this.hsState = {
@@ -23,6 +91,7 @@ class OgameMergerApp {
 
     this.initDomReferences();
     this.bindEvents();
+    this.renderMigrationGroupDetails(1);
     this.initGalaxySelectOptions();
   }
 
@@ -32,16 +101,26 @@ class OgameMergerApp {
       proxySelect: document.getElementById('proxySelect'),
       customProxyInput: document.getElementById('customProxyInput'),
 
+      // Migration Groups
+      groupTabButtons: document.querySelectorAll('.group-tab-btn'),
+      groupDetailsContainer: document.getElementById('groupDetailsContainer'),
+
       // Universe Setup
       addUniverseForm: document.getElementById('addUniverseForm'),
       communityInput: document.getElementById('communityInput'),
       uniNumberInput: document.getElementById('uniNumberInput'),
+      uniRoleSelect: document.getElementById('uniRoleSelect'),
       addUniBtn: document.getElementById('addUniBtn'),
+      loadCommunityListBtn: document.getElementById('loadCommunityListBtn'),
+      communityUnisDropdownContainer: document.getElementById('communityUnisDropdownContainer'),
+      communityUnisSelect: document.getElementById('communityUnisSelect'),
+      closeCommunityListBtn: document.getElementById('closeCommunityListBtn'),
+      selectCommunityUniBtn: document.getElementById('selectCommunityUniBtn'),
+
       universesList: document.getElementById('universesList'),
       emptyUniPlaceholder: document.getElementById('emptyUniPlaceholder'),
       mergeStatusText: document.getElementById('mergeStatusText'),
       runMergeBtn: document.getElementById('runMergeBtn'),
-      quickChips: document.querySelectorAll('.chip-btn'),
 
       // Containers & Tabs
       resultsContainer: document.getElementById('resultsContainer'),
@@ -103,27 +182,64 @@ class OgameMergerApp {
       this.apiClient.setProxy('custom', e.target.value.trim());
     });
 
+    // Group Tabs
+    this.dom.groupTabButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.dom.groupTabButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const grp = parseInt(btn.dataset.group, 10);
+        this.currentGroup = grp;
+        this.renderMigrationGroupDetails(grp);
+      });
+    });
+
     // Universe form
     this.dom.addUniverseForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const comm = this.dom.communityInput.value.trim().toLowerCase();
       const uniNum = parseInt(this.dom.uniNumberInput.value.trim(), 10);
+      const role = this.dom.uniRoleSelect.value;
       if (comm && uniNum) {
-        await this.loadSingleUniverse(comm, uniNum);
+        await this.loadSingleUniverse(comm, uniNum, role);
       }
     });
 
-    // Quick chips
-    this.dom.quickChips.forEach(chip => {
-      chip.addEventListener('click', async () => {
-        const comm = chip.dataset.comm;
-        const unis = chip.dataset.unis.split(',').map(s => parseInt(s.trim(), 10));
-        for (const u of unis) {
-          if (!this.loadedUniverses.has(`${comm}_${u}`)) {
-            await this.loadSingleUniverse(comm, u);
-          }
+    // universes.xml auto-discovery
+    this.dom.loadCommunityListBtn.addEventListener('click', async () => {
+      const comm = this.dom.communityInput.value.trim().toLowerCase() || 'es';
+      this.dom.loadCommunityListBtn.disabled = true;
+      this.dom.loadCommunityListBtn.textContent = 'Descargando universes.xml...';
+
+      try {
+        const uniList = await this.apiClient.fetchCommunityUniverses(comm);
+        this.dom.communityUnisSelect.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        for (const u of uniList) {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = `Uni #${u.id} - ${u.name}`;
+          frag.appendChild(opt);
         }
-      });
+        this.dom.communityUnisSelect.appendChild(frag);
+        this.dom.communityUnisDropdownContainer.classList.remove('hidden');
+      } catch (err) {
+        alert(`Error al obtener universes.xml: ${err.message}`);
+      } finally {
+        this.dom.loadCommunityListBtn.disabled = false;
+        this.dom.loadCommunityListBtn.innerHTML = '<span>🌐</span> Ver Universos Oficiales';
+      }
+    });
+
+    this.dom.closeCommunityListBtn.addEventListener('click', () => {
+      this.dom.communityUnisDropdownContainer.classList.add('hidden');
+    });
+
+    this.dom.selectCommunityUniBtn.addEventListener('click', () => {
+      const selectedId = this.dom.communityUnisSelect.value;
+      if (selectedId) {
+        this.dom.uniNumberInput.value = selectedId;
+        this.dom.communityUnisDropdownContainer.classList.add('hidden');
+      }
     });
 
     // Run merge
@@ -224,6 +340,71 @@ class OgameMergerApp {
     });
   }
 
+  renderMigrationGroupDetails(groupId) {
+    const group = MIGRATION_GROUPS[groupId];
+    if (!group) return;
+
+    const comm = 'es';
+    const frag = document.createDocumentFragment();
+
+    const container = document.createElement('div');
+    container.style.gridColumn = '1 / -1';
+    container.style.display = 'grid';
+    container.style.gridTemplateColumns = '1.3fr 1fr';
+    container.style.gap = '1rem';
+
+    // Left: Exodus
+    const exodusBox = document.createElement('div');
+    exodusBox.innerHTML = `
+      <div style="font-weight: 700; color: var(--accent-orange); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem;">
+        <span>🚪</span> Universos de Éxodo (Servidores a Migrar):
+      </div>
+      <div class="quick-load-chips" id="exodusChipsContainer"></div>
+    `;
+
+    const exodusChips = exodusBox.querySelector('#exodusChipsContainer');
+    for (const u of group.exodus) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-btn';
+      btn.textContent = `${u.name} (${u.id})`;
+      btn.title = `Cargar ${u.name} como universo de Éxodo`;
+      btn.addEventListener('click', () => {
+        this.loadSingleUniverse(comm, u.id, 'exodus');
+      });
+      exodusChips.appendChild(btn);
+    }
+
+    // Right: Destinations
+    const destBox = document.createElement('div');
+    destBox.innerHTML = `
+      <div style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem;">
+        <span>🎯</span> Universos Destino (Anfitriones):
+      </div>
+      <div class="quick-load-chips" id="destChipsContainer"></div>
+    `;
+
+    const destChips = destBox.querySelector('#destChipsContainer');
+    for (const u of group.destinations) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-btn';
+      btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+      btn.textContent = `★ ${u.name} (${u.id})`;
+      btn.title = `Cargar ${u.name} como universo Destino`;
+      btn.addEventListener('click', () => {
+        this.loadSingleUniverse(comm, u.id, 'destination');
+      });
+      destChips.appendChild(btn);
+    }
+
+    container.appendChild(exodusBox);
+    container.appendChild(destBox);
+
+    this.dom.groupDetailsContainer.innerHTML = '';
+    this.dom.groupDetailsContainer.appendChild(container);
+  }
+
   initGalaxySelectOptions(maxGalaxies = 9) {
     const frag = document.createDocumentFragment();
     this.dom.galaxySelect.innerHTML = '';
@@ -236,7 +417,7 @@ class OgameMergerApp {
     this.dom.galaxySelect.appendChild(frag);
   }
 
-  async loadSingleUniverse(community, uniNumber) {
+  async loadSingleUniverse(community, uniNumber, role = 'exodus') {
     const uniKey = `${community}_${uniNumber}`;
 
     if (this.loadedUniverses.has(uniKey)) {
@@ -248,8 +429,7 @@ class OgameMergerApp {
       this.dom.emptyUniPlaceholder.remove();
     }
 
-    // Create progress card element
-    const cardEl = this.createUniverseCard(uniKey, community, uniNumber);
+    const cardEl = this.createUniverseCard(uniKey, community, uniNumber, role);
     this.dom.universesList.appendChild(cardEl);
 
     this.setControlsLoading(true);
@@ -258,6 +438,7 @@ class OgameMergerApp {
       const universeData = await this.apiClient.fetchUniverseData(
         community,
         uniNumber,
+        role,
         (progress) => {
           this.updateUniverseCardProgress(cardEl, progress);
         }
@@ -273,15 +454,19 @@ class OgameMergerApp {
     }
   }
 
-  createUniverseCard(uniKey, community, uniNumber) {
+  createUniverseCard(uniKey, community, uniNumber, role) {
     const card = document.createElement('div');
     card.id = `card_${uniKey}`;
     card.className = 'universe-card loading';
 
+    const roleTag = role === 'destination' 
+      ? '<span style="color: var(--accent-cyan); font-weight: 700;">[★ DESTINO]</span>'
+      : '<span style="color: var(--accent-orange); font-weight: 700;">[ÉXODO]</span>';
+
     card.innerHTML = `
       <div class="uni-info-main" style="flex: 1;">
         <div class="uni-title">
-          <span>Servidor ${community.toUpperCase()} #${uniNumber}</span>
+          <span>${roleTag} Servidor ${community.toUpperCase()} #${uniNumber}</span>
           <span class="uni-status-badge badge-loading">Descargando...</span>
         </div>
         <div class="uni-stats-line" id="stats_${uniKey}">
@@ -365,7 +550,7 @@ class OgameMergerApp {
       this.dom.mergeStatusText.style.color = 'var(--accent-green)';
     } else {
       this.dom.runMergeBtn.disabled = true;
-      this.dom.mergeStatusText.textContent = `Estado: ${readyCount} universo cargado. Se requiere al menos otro más.`;
+      this.dom.mergeStatusText.textContent = `Estado: ${readyCount} universo cargado. Se requiere al menos 2 servidores.`;
       this.dom.mergeStatusText.style.color = 'var(--text-muted)';
     }
   }
@@ -448,7 +633,8 @@ class OgameMergerApp {
     for (const [key, uni] of this.loadedUniverses.entries()) {
       const opt = document.createElement('option');
       opt.value = key;
-      opt.textContent = `${uni.community.toUpperCase()} #${uni.uniNumber} (${uni.serverData.name})`;
+      const rolePrefix = uni.role === 'destination' ? '[★ Destino]' : '[Éxodo]';
+      opt.textContent = `${rolePrefix} ${uni.community.toUpperCase()} #${uni.uniNumber} (${uni.serverData.name})`;
       frag.appendChild(opt);
     }
     this.dom.hsUniverseFilter.appendChild(frag);
@@ -458,7 +644,6 @@ class OgameMergerApp {
     const cat = this.hsState.category;
     const rawList = this.mergedResult.highscores[cat] || [];
     
-    // Filter
     let filtered = rawList;
     if (this.hsState.filterUni !== 'all') {
       filtered = filtered.filter(p => p.uniKey === this.hsState.filterUni);
@@ -476,7 +661,6 @@ class OgameMergerApp {
     const endIdx = Math.min(startIdx + this.hsState.pageSize, totalRecords);
     const pageRecords = filtered.slice(startIdx, endIdx);
 
-    // Update pagination UI
     this.dom.hsPaginationInfo.textContent = totalRecords > 0 
       ? `Mostrando ${startIdx + 1}-${endIdx} de ${totalRecords.toLocaleString()} jugadores`
       : 'No se encontraron resultados';
@@ -484,12 +668,10 @@ class OgameMergerApp {
     this.dom.hsPrevPageBtn.disabled = this.hsState.page <= 1;
     this.dom.hsNextPageBtn.disabled = endIdx >= totalRecords;
 
-    // Render Rows using DocumentFragment
     const frag = document.createDocumentFragment();
     for (const item of pageRecords) {
       const tr = document.createElement('tr');
       
-      // Delta badge
       let deltaHtml = '<span class="delta-badge delta-none">0</span>';
       if (item.delta > 0) {
         deltaHtml = `<span class="delta-badge delta-up">▲ +${item.delta}</span>`;
@@ -497,7 +679,6 @@ class OgameMergerApp {
         deltaHtml = `<span class="delta-badge delta-down">▼ ${item.delta}</span>`;
       }
 
-      // Nick status badge
       let statusTag = '';
       if (item.status && item.status.includes('v')) {
         statusTag += '<span class="player-status-tag tag-v">v</span>';
@@ -509,15 +690,16 @@ class OgameMergerApp {
         statusTag += '<span class="player-status-tag tag-collision" title="Nombre renombrado por conflicto">renombrado</span>';
       }
 
-      // Alliance
       let allianceName = '-';
       if (item.allianceId && this.mergedResult.alliances.has(item.allianceId)) {
         const all = this.mergedResult.alliances.get(item.allianceId);
         allianceName = `[${all.displayTag || all.tag}]`;
       }
 
-      // Format Uni
-      const uniLabel = item.uniKey ? item.uniKey.replace('_', ' #').toUpperCase() : '-';
+      const roleBadge = item.role === 'destination' 
+        ? '<span style="color: var(--accent-cyan); font-size: 0.72rem; font-weight: 700;">★</span> '
+        : '';
+      const uniLabel = item.uniKey ? `${roleBadge}${item.uniKey.replace('_', ' #').toUpperCase()}` : '-';
 
       tr.innerHTML = `
         <td class="mono-cell" style="font-weight: 700; color: #fff;">${item.rank}</td>
@@ -542,7 +724,6 @@ class OgameMergerApp {
     const curG = this.galaxyState.galaxy;
     const curS = this.galaxyState.system;
 
-    // Filter planets in target Galaxy:System
     const planetsInSys = this.mergedResult.planets.filter(
       pl => pl.coords.g === curG && pl.coords.s === curS
     );
@@ -572,7 +753,8 @@ class OgameMergerApp {
       } else {
         const owner = this.mergedResult.players.get(pl.playerId);
         const ownerName = owner ? (owner.displayName || owner.name) : 'Desconocido';
-        const ownerUni = pl.uniKey.replace('_', ' #').toUpperCase();
+        const roleTag = pl.role === 'destination' ? '★ Destino' : 'Éxodo';
+        const ownerUni = `${roleTag} ${pl.uniKey.replace('_', ' #').toUpperCase()}`;
 
         let stateClass = '';
         let badgeHtml = '';
@@ -625,15 +807,18 @@ class OgameMergerApp {
       for (const c of coords) {
         const item = document.createElement('div');
         item.className = 'conflict-box';
+        const roleA = c.retainedPlayer.role === 'destination' ? '[★ Anfitrión]' : '[Éxodo]';
+        const roleB = c.displacedPlayer.role === 'destination' ? '[★ Anfitrión]' : '[Éxodo]';
+
         item.innerHTML = `
           <div>
             <div>
               <span class="conflict-coords">[${c.originalCoords}]</span>
               <strong style="color: #fff; margin-left: 0.4rem;">${this.escapeHtml(c.planetName)}</strong>
-              <span style="color: var(--text-muted); font-size: 0.8rem;">(Jugador: ${this.escapeHtml(c.displacedPlayer.name)} · ${c.displacedPlayer.uniKey.toUpperCase()})</span>
+              <span style="color: var(--text-muted); font-size: 0.8rem;">(Jugador: ${this.escapeHtml(c.displacedPlayer.name)} · ${roleB} ${c.displacedPlayer.uniKey.toUpperCase()})</span>
             </div>
             <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;">
-              Conservó posición: <strong style="color: var(--accent-green);">${this.escapeHtml(c.retainedPlayer.name)}</strong> (${c.retainedPlayer.uniKey.toUpperCase()} - ${c.retainedPlayer.score.toLocaleString()} pts) frente a ${c.displacedPlayer.score.toLocaleString()} pts.
+              Conservó posición: <strong style="color: var(--accent-green);">${this.escapeHtml(c.retainedPlayer.name)}</strong> (${roleA} ${c.retainedPlayer.uniKey.toUpperCase()} - ${c.retainedPlayer.score.toLocaleString()} pts) frente a ${c.displacedPlayer.score.toLocaleString()} pts.
             </div>
           </div>
           <div style="text-align: right;">
@@ -664,7 +849,7 @@ class OgameMergerApp {
               Nombre original en colisión: <strong style="color: #fff;">${this.escapeHtml(n.originalName)}</strong>
             </div>
             <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;">
-              El jugador del universo ${n.keeperUniKey.toUpperCase()} mantuvo el nombre original por mayor antigüedad/puntos.
+              El jugador del universo ${n.keeperUniKey.toUpperCase()} mantuvo el nombre original por prioridad de servidor anfitrión/puntos.
             </div>
           </div>
           <div style="text-align: right;">
