@@ -938,4 +938,389 @@ body {
   background: linear-gradient(135deg, rgba(15, 23, 42, 0.8), rgba(255, 157, 0, 0.04));
 }
 
+/* ==========================================================================
+   FUTURISTIC HUD STYLING (Dashboard Dinámico & Radar de Jugador)
+   ========================================================================== */
+
+.hud-panel {
+  backdrop-filter: blur(12px);
+  background: radial-gradient(circle at 10% 10%, rgba(0, 240, 255, 0.04), transparent 50%),
+              radial-gradient(circle at 90% 90%, rgba(255, 157, 0, 0.03), transparent 50%),
+              #070b14;
+}
+
+.hud-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 10px #00ff88, 0 0 20px #00ff88;
+  animation: pulseNeon 2s infinite ease-in-out;
+  display: inline-block;
+}
+
+@keyframes pulseNeon {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 8px #00ff88, 0 0 16px rgba(0, 255, 136, 0.6);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.85);
+    box-shadow: 0 0 4px #00ff88, 0 0 8px rgba(0, 255, 136, 0.3);
+  }
+}
+
+.hud-stat-box {
+  background: rgba(13, 20, 32, 0.7);
+  border: 1px solid rgba(34, 55, 83, 0.8);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.hud-stat-box:hover {
+  border-color: rgba(0, 240, 255, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+}
+
+.hud-stat-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.hud-stat-val {
+  font-size: 1.55rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1.2;
+}
+
+.hud-stat-sub {
+  font-size: 0.72rem;
+}
+
+/* Radar Search & Autocomplete */
+.radar-search-container {
+  background: radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.05) 0%, transparent 70%),
+              #070c17;
+}
+
+.radar-suggestion-item {
+  padding: 0.65rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease;
+}
+
+.radar-suggestion-item:hover,
+.radar-suggestion-item.selected {
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.radar-chip {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(34, 55, 83, 0.8);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.15s ease;
+}
+
+.radar-chip:hover {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+  background: rgba(0, 240, 255, 0.08);
+}
+
+/* Commander Profile Card */
+.commander-profile-card {
+  background: linear-gradient(135deg, rgba(13, 20, 32, 0.95), rgba(7, 12, 22, 0.95));
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 10px;
+  padding: 1.25rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 240, 255, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.commander-profile-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), var(--accent-green), transparent);
+}
+
+.profile-stat-box {
+  background: rgba(8, 14, 24, 0.7);
+  border: 1px solid rgba(34, 55, 83, 0.6);
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.profile-stat-box .title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.profile-stat-box .value {
+  font-size: 1.15rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #fff;
+}
+
+.btn-coord-radar {
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.1);
+}
+
+.btn-coord-radar:hover {
+  background: rgba(0, 240, 255, 0.2);
+  border-color: #38bdf8;
+  color: #fff;
+  transform: scale(1.04);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.3);
+}
+
+/* ==========================================================================
+   MINIMALIST 15-COLUMN SYSTEM MATRIX TABLE & CARDS
+   ========================================================================== */
+
+.matrix-table-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-cyan) #090f1d;
+}
+
+.matrix-table-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.matrix-table-container::-webkit-scrollbar-track {
+  background: #090f1d;
+  border-radius: 4px;
+}
+
+.matrix-table-container::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.4);
+  border-radius: 4px;
+}
+
+.matrix-table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
+}
+
+.matrix-15col-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.matrix-15col-table th.pos-th {
+  width: 6.666%;
+  min-width: 100px;
+  max-width: 120px;
+  padding: 0.6rem 0.4rem;
+  text-align: center;
+  border-right: 1px solid rgba(34, 55, 83, 0.5);
+}
+
+.matrix-15col-table th.pos-th:last-child {
+  border-right: none;
+}
+
+.pos-badge {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  display: inline-block;
+  letter-spacing: 0.05em;
+}
+
+.matrix-slot-cell {
+  vertical-align: top;
+  padding: 0.6rem 0.4rem;
+  border-right: 1px solid rgba(34, 55, 83, 0.4);
+  background: rgba(6, 10, 18, 0.6);
+  min-height: 220px;
+}
+
+.matrix-slot-cell:last-child {
+  border-right: none;
+}
+
+.matrix-empty-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 140px;
+  color: #475569;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  border: 1px dashed rgba(51, 65, 85, 0.4);
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.matrix-empty-slot .vacant-dash {
+  font-size: 1.25rem;
+  color: #334155;
+}
+
+.matrix-occupants-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.matrix-occupant-card {
+  background: rgba(13, 20, 32, 0.85);
+  border: 1px solid rgba(30, 41, 59, 0.9);
+  border-radius: 5px;
+  padding: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  transition: all 0.15s ease;
+  font-size: 0.72rem;
+}
+
+.matrix-occupant-card:hover {
+  background: rgba(15, 23, 42, 0.98);
+  border-color: rgba(0, 240, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.matrix-occupant-card.is-retained {
+  border-left: 3px solid #00ff88;
+}
+
+.matrix-occupant-card.is-relocated {
+  border-left: 3px solid #fbbf24;
+}
+
+.matrix-occupant-card.highlight-target-player {
+  border: 1.5px solid #00f0ff !important;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(0, 240, 255, 0.12)) !important;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.35);
+}
+
+.occupant-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.occupant-name {
+  font-weight: 700;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 75px;
+}
+
+.highlight-target-player .occupant-name {
+  color: #38bdf8;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+
+.occupant-uni-tag {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: #64748b;
+}
+
+.occupant-score {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #e2e8f0;
+  font-size: 0.7rem;
+}
+
+.highlight-target-player .occupant-score {
+  color: #facc15;
+}
+
+.occupant-score .score-unit {
+  font-size: 0.58rem;
+  color: #64748b;
+  font-weight: normal;
+}
+
+.occupant-planet-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #94a3b8;
+  font-size: 0.65rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.occupant-status-tag {
+  font-size: 0.58rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-weight: 600;
+  align-self: flex-start;
+}
+
+.tag-retained {
+  background: rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+}
+
+.tag-relocated {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+
 

@@ -138,9 +138,9 @@ export class UniverseStorage {
       role: universeData.role || 'exodus',
       savedAt: Date.now(),
       serverData: universeData.serverData,
-      alliances: Array.from(universeData.alliances.entries()),
-      players: Array.from(universeData.players.entries()),
-      planets: universeData.planets
+      alliances: universeData.alliances instanceof Map ? Array.from(universeData.alliances.entries()) : (Array.isArray(universeData.alliances) ? universeData.alliances : []),
+      players: universeData.players instanceof Map ? Array.from(universeData.players.entries()) : (Array.isArray(universeData.players) ? universeData.players : []),
+      planets: Array.isArray(universeData.planets) ? universeData.planets : []
     };
 
     return new Promise((resolve, reject) => {
@@ -177,9 +177,9 @@ export class UniverseStorage {
           uniNumber: data.uniNumber,
           role: data.role || 'exodus',
           serverData: data.serverData,
-          alliances: new Map(data.alliances),
-          players: new Map(data.players),
-          planets: data.planets
+          alliances: Array.isArray(data.alliances) ? new Map(data.alliances) : (data.alliances instanceof Map ? data.alliances : new Map()),
+          players: Array.isArray(data.players) ? new Map(data.players) : (data.players instanceof Map ? data.players : new Map()),
+          planets: Array.isArray(data.planets) ? data.planets : []
         };
         resolve(hydrated);
       };
@@ -208,9 +208,9 @@ export class UniverseStorage {
           role: data.role || 'exodus',
           savedAt: data.savedAt,
           serverData: data.serverData,
-          alliances: new Map(data.alliances),
-          players: new Map(data.players),
-          planets: data.planets
+          alliances: Array.isArray(data.alliances) ? new Map(data.alliances) : (data.alliances instanceof Map ? data.alliances : new Map()),
+          players: Array.isArray(data.players) ? new Map(data.players) : (data.players instanceof Map ? data.players : new Map()),
+          planets: Array.isArray(data.planets) ? data.planets : []
         }));
         resolve(hydratedList);
       };

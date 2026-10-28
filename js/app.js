@@ -70,7 +70,7 @@ const MIGRATION_GROUPS = {
   }
 };
 
-class OgameMergerApp {
+export class OgameMergerApp {
   constructor() {
     this.apiClient = new OgameApiClient({ proxyType: 'corsproxy' });
     this.storage = new UniverseStorage();
@@ -78,7 +78,10 @@ class OgameMergerApp {
     this.mergedResult = null;
     this.currentGroup = 1;
 
-    this.activeTab = 'tabOverview';
+    this.activeTab = 'tabDashboard';
+    this.selectedRadarPlayer = null;
+    this.activeDataSourceLabel = 'Inicializando...';
+
     this.hsState = {
       category: 'total',
       filterUni: 'all',
@@ -99,8 +102,8 @@ class OgameMergerApp {
     this.renderMigrationGroupDetails(1);
     this.initGalaxySelectOptions();
 
-    // Auto-load existing saved universes from IndexedDB
-    this.loadSavedUniversesFromStorage();
+    // Auto-load existing saved universes from local or project file
+    this.initInitialSimulationData();
   }
 
   initDomReferences() {
@@ -142,6 +145,34 @@ class OgameMergerApp {
       tabButtons: document.querySelectorAll('.tab-btn'),
       tabContents: document.querySelectorAll('.tab-content'),
       conflictsBadge: document.getElementById('conflictsBadge'),
+
+      // Tab 0: Dynamic Dashboard
+      btnTabDashboard: document.getElementById('btnTabDashboard'),
+      btnTabPlayerRadar: document.getElementById('btnTabPlayerRadar'),
+      dashboardSourceStatus: document.getElementById('dashboardSourceStatus'),
+      dashLoadLocalBtn: document.getElementById('dashLoadLocalBtn'),
+      dashProjectFileInput: document.getElementById('dashProjectFileInput'),
+      dashServerCount: document.getElementById('dashServerCount'),
+      dashServerList: document.getElementById('dashServerList'),
+      dashPlayerCount: document.getElementById('dashPlayerCount'),
+      dashActiveRatio: document.getElementById('dashActiveRatio'),
+      dashPlanetCount: document.getElementById('dashPlanetCount'),
+      dashCollisionRatio: document.getElementById('dashCollisionRatio'),
+      dashTotalPoints: document.getElementById('dashTotalPoints'),
+      dashFleetPoints: document.getElementById('dashFleetPoints'),
+      dashGoToRadarBtn: document.getElementById('dashGoToRadarBtn'),
+      dashUniversesContainer: document.getElementById('dashUniversesContainer'),
+      dashSpeedGreenCount: document.getElementById('dashSpeedGreenCount'),
+      dashSpeedYellowCount: document.getElementById('dashSpeedYellowCount'),
+      dashSpeedRedCount: document.getElementById('dashSpeedRedCount'),
+
+      // Tab 0.5: Player Radar
+      radarPlayerSearchInput: document.getElementById('radarPlayerSearchInput'),
+      clearRadarSearchBtn: document.getElementById('clearRadarSearchBtn'),
+      radarPlayerSuggestions: document.getElementById('radarPlayerSuggestions'),
+      radarSearchBtn: document.getElementById('radarSearchBtn'),
+      radarQuickPlayerChips: document.getElementById('radarQuickPlayerChips'),
+      radarPlayerResultContainer: document.getElementById('radarPlayerResultContainer'),
 
       // Tab 1: Stats
       statTotalPlayers: document.getElementById('statTotalPlayers'),
@@ -186,13 +217,23 @@ class OgameMergerApp {
       importJsonTabInput: document.getElementById('importJsonTabInput'),
       importTabStatus: document.getElementById('importTabStatus'),
 
-      // Slot Detail Modal
+      // Slot Detail Modal (Original)
       slotDetailModal: document.getElementById('slotDetailModal'),
       modalSlotTitle: document.getElementById('modalSlotTitle'),
       modalSlotSubtitle: document.getElementById('modalSlotSubtitle'),
       modalSlotBody: document.getElementById('modalSlotBody'),
       closeSlotModalBtn: document.getElementById('closeSlotModalBtn'),
-      closeSlotModalBtnBottom: document.getElementById('closeSlotModalBtnBottom')
+      closeSlotModalBtnBottom: document.getElementById('closeSlotModalBtnBottom'),
+
+      // Minimalist 15-Column System Matrix Modal
+      systemPositionsModal: document.getElementById('systemPositionsModal'),
+      modalMatrixTitle: document.getElementById('modalMatrixTitle'),
+      modalMatrixSubtitle: document.getElementById('modalMatrixSubtitle'),
+      matrixOccupancyBadge: document.getElementById('matrixOccupancyBadge'),
+      matrixTotalPlayersBadge: document.getElementById('matrixTotalPlayersBadge'),
+      matrixTableBody: document.getElementById('matrixTableBody'),
+      closeMatrixModalBtn: document.getElementById('closeMatrixModalBtn'),
+      closeMatrixModalBtnBottom: document.getElementById('closeMatrixModalBtnBottom')
     };
   }
 
@@ -224,16 +265,78 @@ class OgameMergerApp {
     });
   }
 
-  async loadSavedUniversesFromStorage() {
+  async initInitialSimulationData() {
     try {
+      // 1. Try loading from IndexedDB
       const saved = await this.storage.getAllUniverses();
       for (const u of saved) {
         this.loadedUniverses.set(u.uniKey, u);
       }
       this.renderUniversesList();
       this.updateMergeActionState();
+
+      if (this.loadedUniverses.size >= 2) {
+        this.executeSimulation();
+        this.activeDataSourceLabel = `Almacenamiento Local (IndexedDB · ${this.loadedUniverses.size} Universos)`;
+        if (this.dom.dashboardSourceStatus) {
+          this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel}`;
+        }
+        return;
+      }
+
+      // 2. Otherwise ("de lo contrario"): load project's latest generated simulation file from data/
+      await this.loadProjectGeneratedFile('data/ogame_simulation_latest.json');
     } catch (err) {
-      console.warn('Could not load cached universes from IndexedDB:', err);
+      console.warn('Initial data load attempt error:', err);
+      try {
+        await this.loadProjectGeneratedFile('data/ogame_simulation_latest.json');
+      } catch (err2) {
+        console.warn('Fallback file load also failed:', err2);
+      }
+    }
+  }
+
+  async loadProjectGeneratedFile(filePath = 'data/ogame_simulation_latest.json') {
+    const cleanPath = filePath.startsWith('./') ? filePath : `./${filePath}`;
+    const fileName = filePath.split('/').pop();
+    if (this.dom.dashboardSourceStatus) {
+      this.dom.dashboardSourceStatus.textContent = `Cargando datos (${fileName})...`;
+    }
+    try {
+      const response = await fetch(cleanPath);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} al leer ${cleanPath}`);
+      }
+      const data = await response.json();
+      this.hydrateSimulationData(data, `Memoria del Proyecto (${fileName})`, false);
+    } catch (err) {
+      console.error(`Error cargando archivo de proyecto ${filePath}:`, err);
+      if (this.dom.dashboardSourceStatus) {
+        this.dom.dashboardSourceStatus.textContent = `Error: ${err.message}`;
+      }
+    }
+  }
+
+  async loadFromLocalIndexedDB() {
+    try {
+      const saved = await this.storage.getAllUniverses();
+      if (!saved || saved.length < 2) {
+        alert(`Almacenamiento local insuficiente: solo hay ${saved ? saved.length : 0} universo(s) guardado(s) en IndexedDB. Se requieren al menos 2 universos para ejecutar una fusión local.`);
+        return;
+      }
+      this.loadedUniverses.clear();
+      for (const u of saved) {
+        this.loadedUniverses.set(u.uniKey, u);
+      }
+      this.renderUniversesList();
+      this.updateMergeActionState();
+      this.executeSimulation();
+      this.activeDataSourceLabel = `Almacenamiento Local (IndexedDB · ${this.loadedUniverses.size} Universos)`;
+      if (this.dom.dashboardSourceStatus) {
+        this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel}`;
+      }
+    } catch (err) {
+      alert(`Error leyendo IndexedDB local: ${err.message}`);
     }
   }
 
@@ -447,6 +550,104 @@ class OgameMergerApp {
       });
     }
 
+    // Dashboard actions
+    if (this.dom.dashLoadLocalBtn) {
+      this.dom.dashLoadLocalBtn.addEventListener('click', async () => {
+        await this.loadFromLocalIndexedDB();
+      });
+    }
+
+    if (this.dom.dashProjectFileInput) {
+      this.dom.dashProjectFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          await this.importMergedJson(file);
+        }
+        e.target.value = '';
+      });
+    }
+
+    if (this.dom.dashGoToRadarBtn) {
+      this.dom.dashGoToRadarBtn.addEventListener('click', () => {
+        this.switchTab('tabPlayerRadar');
+      });
+    }
+
+    // Player Radar Search & Suggestions
+    if (this.dom.radarPlayerSearchInput) {
+      let radarDebounceTimer;
+      this.dom.radarPlayerSearchInput.addEventListener('input', (e) => {
+        clearTimeout(radarDebounceTimer);
+        const query = e.target.value.trim();
+        if (this.dom.clearRadarSearchBtn) {
+          this.dom.clearRadarSearchBtn.classList.toggle('hidden', query.length === 0);
+        }
+        if (query.length < 2) {
+          this.hideRadarSuggestions();
+          return;
+        }
+        radarDebounceTimer = setTimeout(() => {
+          this.showRadarSuggestions(query);
+        }, 150);
+      });
+
+      this.dom.radarPlayerSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.hideRadarSuggestions();
+          const query = this.dom.radarPlayerSearchInput.value.trim();
+          if (query) {
+            this.renderPlayerRadar(query);
+          }
+        } else if (e.key === 'Escape') {
+          this.hideRadarSuggestions();
+        }
+      });
+    }
+
+    if (this.dom.clearRadarSearchBtn) {
+      this.dom.clearRadarSearchBtn.addEventListener('click', () => {
+        if (this.dom.radarPlayerSearchInput) {
+          this.dom.radarPlayerSearchInput.value = '';
+          this.dom.clearRadarSearchBtn.classList.add('hidden');
+          this.hideRadarSuggestions();
+          this.dom.radarPlayerSearchInput.focus();
+        }
+      });
+    }
+
+    if (this.dom.radarSearchBtn) {
+      this.dom.radarSearchBtn.addEventListener('click', () => {
+        const query = this.dom.radarPlayerSearchInput?.value?.trim();
+        if (query) {
+          this.hideRadarSuggestions();
+          this.renderPlayerRadar(query);
+        }
+      });
+    }
+
+    // Hide suggestions when clicking outside
+    document.addEventListener('click', (e) => {
+      if (this.dom.radarPlayerSuggestions && !this.dom.radarPlayerSuggestions.contains(e.target) && e.target !== this.dom.radarPlayerSearchInput) {
+        this.hideRadarSuggestions();
+      }
+    });
+
+    // 15-Column System Matrix Modal listeners
+    if (this.dom.closeMatrixModalBtn) {
+      this.dom.closeMatrixModalBtn.addEventListener('click', () => this.closeMatrixModal());
+    }
+    if (this.dom.closeMatrixModalBtnBottom) {
+      this.dom.closeMatrixModalBtnBottom.addEventListener('click', () => this.closeMatrixModal());
+    }
+    if (this.dom.systemPositionsModal) {
+      this.dom.systemPositionsModal.addEventListener('click', (e) => {
+        if (e.target === this.dom.systemPositionsModal) {
+          this.closeMatrixModal();
+        }
+      });
+    }
+
     // Modal listeners
     if (this.dom.closeSlotModalBtn) {
       this.dom.closeSlotModalBtn.addEventListener('click', () => this.closeSlotModal());
@@ -462,8 +663,12 @@ class OgameMergerApp {
       });
     }
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.dom.slotDetailModal && !this.dom.slotDetailModal.classList.contains('hidden')) {
-        this.closeSlotModal();
+      if (e.key === 'Escape') {
+        if (this.dom.systemPositionsModal && !this.dom.systemPositionsModal.classList.contains('hidden')) {
+          this.closeMatrixModal();
+        } else if (this.dom.slotDetailModal && !this.dom.slotDetailModal.classList.contains('hidden')) {
+          this.closeSlotModal();
+        }
       }
     });
   }
@@ -694,20 +899,22 @@ class OgameMergerApp {
       data.serverData.role = newRole;
     }
 
-    if (data.players) {
+    if (data.players && typeof data.players.values === 'function') {
       for (const player of data.players.values()) {
         player.role = newRole;
       }
     }
 
-    if (data.planets) {
+    if (Array.isArray(data.planets)) {
       for (const planet of data.planets) {
         planet.role = newRole;
       }
     }
 
-    // Persist changes to IndexedDB
-    await this.storage.saveUniverse(data);
+    // Persist changes to IndexedDB if it contains valid entities
+    if (data.players instanceof Map && data.alliances instanceof Map) {
+      await this.storage.saveUniverse(data);
+    }
 
     // Refresh UI lists
     this.renderUniversesList();
@@ -739,6 +946,7 @@ class OgameMergerApp {
       const universesArray = Array.from(this.loadedUniverses.values());
       const engine = new UniverseMergeEngine(universesArray);
       this.mergedResult = engine.executeMerge();
+      this.activeDataSourceLabel = `Simulación Local (${this.loadedUniverses.size} Universos)`;
 
       this.populateUniverseFilterOptions();
       this.initGalaxySelectOptions(this.mergedResult.destination.galaxies);
@@ -747,10 +955,11 @@ class OgameMergerApp {
       this.renderHighscoreTable();
       this.renderGalaxySystem();
       this.renderConflictsView();
+      this.renderDynamicDashboard();
+      this.renderPlayerRadar();
 
       this.dom.resultsContainer.classList.remove('hidden');
-      this.switchTab('tabOverview');
-      this.dom.resultsContainer.scrollIntoView({ behavior: 'smooth' });
+      this.switchTab(this.activeTab || 'tabDashboard');
     } catch (err) {
       alert(`Error en el motor de fusión: ${err.message}`);
     }
@@ -1448,139 +1657,757 @@ class OgameMergerApp {
     try {
       const text = await file.text();
       const data = JSON.parse(text);
-
-      if (!data || (!data.highscores && !data.analytics && !data.destination)) {
-        throw new Error('El archivo no tiene el formato válido de una simulación de universo de OGame.');
-      }
-
-      // Reconstruct players Map
-      let playersMap = new Map();
-      if (Array.isArray(data.players)) {
-        playersMap = new Map(data.players);
-      } else if (data.players && typeof data.players === 'object') {
-        playersMap = new Map(Object.entries(data.players));
-      } else if (data.highscores?.total) {
-        // Fallback for older export format: reconstruct players from highscore list
-        for (const p of data.highscores.total) {
-          playersMap.set(p.id, {
-            id: p.id,
-            name: p.name,
-            displayName: p.name,
-            originalName: p.originalName || p.name,
-            uniKey: p.uniKey,
-            role: p.role,
-            allianceId: p.allianceId,
-            speedTrafficLight: p.speedTrafficLight,
-            status: p.status,
-            scores: { total: p.score },
-            mergedRanks: { total: p.rank },
-            ships: 0
-          });
-        }
-      }
-
-      // Reconstruct alliances Map
-      let alliancesMap = new Map();
-      if (Array.isArray(data.alliances)) {
-        alliancesMap = new Map(data.alliances);
-      } else if (data.alliances && typeof data.alliances === 'object') {
-        alliancesMap = new Map(Object.entries(data.alliances));
-      }
-
-      // Reconstruct planets array
-      const planets = Array.isArray(data.planets) ? data.planets : [];
-
-      // Reconstruct systemDensity Map in analytics
-      const analytics = data.analytics || {};
-      if (Array.isArray(analytics.systemDensity)) {
-        analytics.systemDensity = new Map(analytics.systemDensity);
-      } else if (analytics.systemDensity && !(analytics.systemDensity instanceof Map)) {
-        analytics.systemDensity = new Map(Object.entries(analytics.systemDensity));
-      } else if (!analytics.systemDensity) {
-        analytics.systemDensity = new Map();
-      }
-
-      // Set mergedResult
-      this.mergedResult = {
-        destination: data.destination || {
-          name: 'Universo Importado',
-          galaxies: 9,
-          systems: 499,
-          slotsPerSystem: 15
-        },
-        players: playersMap,
-        alliances: alliancesMap,
-        planets,
-        highscores: data.highscores || {},
-        conflicts: data.conflicts || {
-          coordinates: [],
-          nicknames: [],
-          tags: []
-        },
-        analytics
-      };
-
-      // Restore source universes if available
-      if (Array.isArray(data.sourceUniverses) && data.sourceUniverses.length > 0) {
-        for (const u of data.sourceUniverses) {
-          const key = u.uniKey || `${u.community}_${u.uniNumber}`;
-          this.loadedUniverses.set(key, {
-            ...u,
-            uniKey: key,
-            players: { size: u.playersCount || (u.players?.size ?? 0) },
-            planets: { length: u.planetsCount || (u.planets?.length ?? 0) },
-            alliances: { size: u.alliancesCount || (u.alliances?.size ?? 0) }
-          });
-        }
-      } else {
-        // Fallback: extract distinct uniKeys from players or highscores
-        const distinctUnis = new Set();
-        for (const p of playersMap.values()) {
-          if (p.uniKey) distinctUnis.add(p.uniKey);
-        }
-        for (const key of distinctUnis) {
-          if (!this.loadedUniverses.has(key)) {
-            const parts = key.split('_');
-            const comm = parts[0] || 'es';
-            const num = parts[1] || '1';
-            this.loadedUniverses.set(key, {
-              community: comm,
-              uniNumber: num,
-              uniKey: key,
-              role: 'destination',
-              serverData: { name: `Uni ${num}` },
-              players: { size: 0 },
-              planets: { length: 0 },
-              alliances: { size: 0 }
-            });
-          }
-        }
-      }
-
-      // Update universe lists and actions
-      this.renderUniversesList();
-      this.updateMergeActionState();
-
-      // Refresh filter options and galaxy selectors
-      this.populateUniverseFilterOptions();
-      this.initGalaxySelectOptions(this.mergedResult.destination?.galaxies || 9);
-
-      // Render all simulation results
-      this.renderOverviewMetrics();
-      this.renderHighscoreTable();
-      this.renderGalaxySystem();
-      this.renderConflictsView();
-
-      // Reveal results and navigate to overview
-      this.dom.resultsContainer.classList.remove('hidden');
-      this.switchTab('tabOverview');
-      this.dom.resultsContainer.scrollIntoView({ behavior: 'smooth' });
-
-      const totalPl = this.mergedResult.players.size || (this.mergedResult.highscores?.total?.length ?? 0);
-      alert(`Simulación importada con éxito.\n• Jugadores: ${totalPl.toLocaleString()}\n• Planetas: ${planets.length.toLocaleString()}\n• Servidores detectados: ${this.loadedUniverses.size}`);
+      this.hydrateSimulationData(data, `Archivo JSON (${file.name})`, true);
     } catch (err) {
       alert(`Error al importar el archivo JSON: ${err.message}`);
     }
+  }
+
+  hydrateSimulationData(data, sourceLabel = 'Archivo JSON', showAlert = false) {
+    if (!data || (!data.highscores && !data.analytics && !data.destination)) {
+      throw new Error('El archivo no tiene el formato válido de una simulación de universo de OGame.');
+    }
+
+    // 1. Reconstruct players Map
+    let playersMap = new Map();
+    if (Array.isArray(data.players)) {
+      playersMap = new Map(data.players);
+    } else if (data.players && typeof data.players === 'object') {
+      playersMap = new Map(Object.entries(data.players));
+    } else if (data.highscores?.total) {
+      for (const p of data.highscores.total) {
+        const pId = p.playerId || p.id;
+        playersMap.set(pId, {
+          id: pId,
+          playerId: pId,
+          name: p.name,
+          displayName: p.name,
+          originalName: p.originalName || p.name,
+          uniKey: p.uniKey,
+          role: p.role,
+          allianceId: p.allianceId,
+          speedTrafficLight: p.speedTrafficLight,
+          status: p.status,
+          scores: { total: p.score },
+          mergedRanks: { total: p.rank },
+          ships: 0
+        });
+      }
+    }
+
+    // 2. Reconstruct alliances Map
+    let alliancesMap = new Map();
+    if (Array.isArray(data.alliances)) {
+      alliancesMap = new Map(data.alliances);
+    } else if (data.alliances && typeof data.alliances === 'object') {
+      alliancesMap = new Map(Object.entries(data.alliances));
+    }
+
+    // 3. Reconstruct planets array
+    const planets = Array.isArray(data.planets) ? data.planets : [];
+
+    // 4. Reconstruct systemDensity Map in analytics
+    const analytics = data.analytics || {};
+    if (Array.isArray(analytics.systemDensity)) {
+      analytics.systemDensity = new Map(analytics.systemDensity);
+    } else if (analytics.systemDensity && !(analytics.systemDensity instanceof Map)) {
+      analytics.systemDensity = new Map(Object.entries(analytics.systemDensity));
+    } else if (!analytics.systemDensity) {
+      analytics.systemDensity = new Map();
+    }
+
+    // 5. Set mergedResult
+    this.mergedResult = {
+      destination: data.destination || {
+        name: 'Universo Importado',
+        galaxies: 9,
+        systems: 499,
+        slotsPerSystem: 15
+      },
+      players: playersMap,
+      alliances: alliancesMap,
+      planets,
+      highscores: data.highscores || {},
+      conflicts: data.conflicts || {
+        coordinates: [],
+        nicknames: [],
+        tags: []
+      },
+      analytics
+    };
+
+    // 6. Restore source universes
+    if (Array.isArray(data.sourceUniverses) && data.sourceUniverses.length > 0) {
+      this.loadedUniverses.clear();
+      for (const u of data.sourceUniverses) {
+        const key = u.uniKey || `${u.community}_${u.uniNumber}`;
+        this.loadedUniverses.set(key, {
+          ...u,
+          uniKey: key,
+          players: { size: u.playersCount || (u.players?.size ?? 0) },
+          planets: { length: u.planetsCount || (u.planets?.length ?? 0) },
+          alliances: { size: u.alliancesCount || (u.alliances?.size ?? 0) }
+        });
+      }
+    } else {
+      const distinctUnis = new Set();
+      for (const p of playersMap.values()) {
+        if (p.uniKey) distinctUnis.add(p.uniKey);
+      }
+      for (const key of distinctUnis) {
+        if (!this.loadedUniverses.has(key)) {
+          const parts = key.split('_');
+          const comm = parts[0] || 'es';
+          const num = parts[1] || '1';
+          this.loadedUniverses.set(key, {
+            community: comm,
+            uniNumber: num,
+            uniKey: key,
+            role: 'destination',
+            serverData: { name: `Uni ${num}` },
+            players: { size: 0 },
+            planets: { length: 0 },
+            alliances: { size: 0 }
+          });
+        }
+      }
+    }
+
+    this.activeDataSourceLabel = sourceLabel;
+    if (this.dom.dashboardSourceStatus) {
+      this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${sourceLabel}`;
+    }
+
+    // 7. Update UI lists and actions
+    this.renderUniversesList();
+    this.updateMergeActionState();
+
+    // 8. Refresh filter options and galaxy selectors
+    this.populateUniverseFilterOptions();
+    this.initGalaxySelectOptions(this.mergedResult.destination?.galaxies || 9);
+
+    // 9. Render all views
+    this.renderOverviewMetrics();
+    this.renderHighscoreTable();
+    this.renderGalaxySystem();
+    this.renderConflictsView();
+    this.renderDynamicDashboard();
+    this.renderPlayerRadar();
+
+    // Reveal results
+    this.dom.resultsContainer.classList.remove('hidden');
+    this.switchTab(this.activeTab || 'tabDashboard');
+
+    if (showAlert) {
+      const totalPl = this.mergedResult.players.size || (this.mergedResult.highscores?.total?.length ?? 0);
+      alert(`Simulación cargada con éxito.\n• Fuente: ${sourceLabel}\n• Jugadores: ${totalPl.toLocaleString()}\n• Planetas: ${planets.length.toLocaleString()}\n• Servidores detectados: ${this.loadedUniverses.size}`);
+    }
+  }
+
+  renderDynamicDashboard() {
+    if (!this.mergedResult) return;
+    const a = this.mergedResult.analytics || {};
+
+    if (this.dom.dashboardSourceStatus) {
+      this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel || 'Simulación en Memoria'}`;
+    }
+
+    if (this.dom.dashServerCount) {
+      this.dom.dashServerCount.textContent = this.loadedUniverses.size;
+    }
+    if (this.dom.dashServerList) {
+      const uniNames = Array.from(this.loadedUniverses.values())
+        .map(u => `${u.role === 'destination' ? '★ ' : ''}U${u.uniNumber}`)
+        .join(' · ');
+      this.dom.dashServerList.textContent = uniNames || 'Servidores OGame';
+    }
+
+    if (this.dom.dashPlayerCount) {
+      const totalPl = a.totalPlayers || this.mergedResult.players.size || 0;
+      this.dom.dashPlayerCount.textContent = totalPl.toLocaleString();
+    }
+    if (this.dom.dashActiveRatio) {
+      this.dom.dashActiveRatio.textContent = `${(a.activePlayers || 0).toLocaleString()} activos · ${(a.vacationPlayers || 0).toLocaleString()} vacaciones`;
+    }
+
+    if (this.dom.dashPlanetCount) {
+      const totalPlanets = a.totalPlanets || this.mergedResult.planets.length || 0;
+      this.dom.dashPlanetCount.textContent = totalPlanets.toLocaleString();
+    }
+    if (this.dom.dashCollisionRatio) {
+      this.dom.dashCollisionRatio.textContent = `${(a.totalCollisions || 0).toLocaleString()} colisiones resueltas (${(a.totalNickCollisions || 0).toLocaleString()} nicks)`;
+    }
+
+    if (this.dom.dashTotalPoints) {
+      this.dom.dashTotalPoints.textContent = `${(a.totalPoints || 0).toLocaleString()} pts`;
+    }
+    if (this.dom.dashFleetPoints) {
+      this.dom.dashFleetPoints.textContent = `${(a.totalShips || 0).toLocaleString()} naves en flota`;
+    }
+
+    // Speeds breakdown
+    const sc = a.speedCounts || { green: 0, yellow: 0, red: 0 };
+    if (this.dom.dashSpeedGreenCount) {
+      this.dom.dashSpeedGreenCount.textContent = `${sc.green.toLocaleString()} jug.`;
+    }
+    if (this.dom.dashSpeedYellowCount) {
+      this.dom.dashSpeedYellowCount.textContent = `${sc.yellow.toLocaleString()} jug.`;
+    }
+    if (this.dom.dashSpeedRedCount) {
+      this.dom.dashSpeedRedCount.textContent = `${sc.red.toLocaleString()} jug.`;
+    }
+
+    // Render list of active universes in dashboard
+    if (this.dom.dashUniversesContainer) {
+      this.dom.dashUniversesContainer.innerHTML = '';
+      const frag = document.createDocumentFragment();
+
+      for (const [key, u] of this.loadedUniverses.entries()) {
+        const item = document.createElement('div');
+        item.className = 'p-3 rounded bg-slate-900 border border-slate-800 flex justify-between items-center flex-wrap gap-2 text-xs';
+        const isDest = u.role === 'destination';
+        const roleBadge = isDest
+          ? '<span class="text-cyan-400 font-bold bg-cyan-950/80 border border-cyan-500/40 px-2 py-0.5 rounded">[★ DESTINO / ANFITRIÓN]</span>'
+          : '<span class="text-amber-400 font-bold bg-amber-950/80 border border-amber-500/40 px-2 py-0.5 rounded">[ÉXODO / MIGRANTE]</span>';
+        
+        const warSpeed = u.serverData?.speedFleetWar || u.serverData?.speedFleet || 1;
+        const speedLight = UniverseMergeEngine.getSpeedTrafficLight(warSpeed);
+
+        item.innerHTML = `
+          <div class="flex items-center gap-2">
+            ${roleBadge}
+            <span class="font-bold text-white">${u.community ? u.community.toUpperCase() : 'ES'} #${u.uniNumber}</span>
+            <span class="text-slate-400">(${u.serverData?.name || 'Universo'})</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.68rem; padding: 0.1rem 0.4rem;">
+              Vel. Bélica ${speedLight.label}
+            </span>
+            <span class="text-slate-300 font-mono">👥 ${(u.players?.size || 0).toLocaleString()} jug.</span>
+            <span class="text-slate-300 font-mono">🪐 ${(u.planets?.length || 0).toLocaleString()} plan.</span>
+          </div>
+        `;
+        frag.appendChild(item);
+      }
+      this.dom.dashUniversesContainer.appendChild(frag);
+    }
+  }
+
+  showRadarSuggestions(query) {
+    if (!this.mergedResult || !this.mergedResult.players || !this.dom.radarPlayerSuggestions) return;
+    const q = query.toLowerCase().trim();
+    const matches = [];
+
+    for (const player of this.mergedResult.players.values()) {
+      const name = (player.name || '').toLowerCase();
+      const orig = (player.originalName || '').toLowerCase();
+      const disp = (player.displayName || '').toLowerCase();
+
+      if (name.includes(q) || orig.includes(q) || disp.includes(q)) {
+        matches.push(player);
+        if (matches.length >= 10) break;
+      }
+    }
+
+    if (matches.length === 0) {
+      this.dom.radarPlayerSuggestions.innerHTML = '<div class="p-3 text-xs text-slate-500 italic">No se encontraron comandantes con ese término.</div>';
+      this.dom.radarPlayerSuggestions.classList.remove('hidden');
+      return;
+    }
+
+    this.dom.radarPlayerSuggestions.innerHTML = '';
+    const frag = document.createDocumentFragment();
+
+    for (const player of matches) {
+      const item = document.createElement('div');
+      item.className = 'radar-suggestion-item';
+      const score = player.scores?.total ?? player.score ?? 0;
+      const uniTag = (player.uniKey || '').toUpperCase().replace('_', ' ');
+
+      item.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-white text-xs">${this.escapeHtml(player.displayName || player.name)}</span>
+          <span class="text-[10px] text-slate-500 font-mono">[${this.escapeHtml(uniTag)}]</span>
+        </div>
+        <div class="text-xs font-mono text-cyan-400 font-semibold">
+          ${score.toLocaleString()} pts
+        </div>
+      `;
+
+      item.addEventListener('click', () => {
+        this.selectRadarPlayer(player);
+      });
+      frag.appendChild(item);
+    }
+
+    this.dom.radarPlayerSuggestions.appendChild(frag);
+    this.dom.radarPlayerSuggestions.classList.remove('hidden');
+  }
+
+  hideRadarSuggestions() {
+    if (this.dom.radarPlayerSuggestions) {
+      this.dom.radarPlayerSuggestions.classList.add('hidden');
+    }
+  }
+
+  selectRadarPlayer(player) {
+    if (!player) return;
+    this.selectedRadarPlayer = player;
+    this.hideRadarSuggestions();
+    if (this.dom.radarPlayerSearchInput) {
+      this.dom.radarPlayerSearchInput.value = player.displayName || player.name;
+    }
+    if (this.dom.clearRadarSearchBtn) {
+      this.dom.clearRadarSearchBtn.classList.remove('hidden');
+    }
+    this.renderPlayerRadar(player.id);
+  }
+
+  renderPlayerRadar(targetPlayerIdOrName = null) {
+    if (!this.mergedResult || !this.mergedResult.players || !this.dom.radarPlayerResultContainer) return;
+
+    // 1. Render Top Quick Access Chips
+    if (this.dom.radarQuickPlayerChips) {
+      this.dom.radarQuickPlayerChips.innerHTML = '';
+      const topList = (this.mergedResult.highscores?.total || []).slice(0, 7);
+      const chipFrag = document.createDocumentFragment();
+
+      for (let i = 0; i < topList.length; i++) {
+        const topItem = topList[i];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'radar-chip';
+        btn.innerHTML = `<span class="text-amber-400 font-bold">#${i + 1}</span> ${this.escapeHtml(topItem.name)}`;
+        btn.addEventListener('click', () => {
+          const targetPId = topItem.playerId || topItem.id;
+          const playerObj = this.mergedResult.players.get(targetPId);
+          this.selectRadarPlayer(playerObj || topItem);
+        });
+        chipFrag.appendChild(btn);
+      }
+      this.dom.radarQuickPlayerChips.appendChild(chipFrag);
+    }
+
+    // 2. Identify Target Player
+    let player = null;
+
+    if (targetPlayerIdOrName) {
+      if (typeof targetPlayerIdOrName === 'string') {
+        // Direct ID match
+        player = this.mergedResult.players.get(targetPlayerIdOrName);
+        if (!player) {
+          // Name search
+          const q = targetPlayerIdOrName.toLowerCase().trim();
+          for (const p of this.mergedResult.players.values()) {
+            const name = (p.name || '').toLowerCase();
+            const disp = (p.displayName || '').toLowerCase();
+            const orig = (p.originalName || '').toLowerCase();
+            if (disp === q || name === q || orig === q) {
+              player = p;
+              break;
+            }
+          }
+          if (!player) {
+            // Partial match fallback
+            for (const p of this.mergedResult.players.values()) {
+              const name = (p.name || '').toLowerCase();
+              const disp = (p.displayName || '').toLowerCase();
+              if (disp.includes(q) || name.includes(q)) {
+                player = p;
+                break;
+              }
+            }
+          }
+        }
+      } else if (typeof targetPlayerIdOrName === 'object') {
+        player = targetPlayerIdOrName;
+      }
+    }
+
+    if (!player && this.selectedRadarPlayer) {
+      player = this.selectedRadarPlayer;
+    }
+
+    if (!player) {
+      const topFirst = (this.mergedResult.highscores?.total || [])[0];
+      if (topFirst) {
+        const topFirstId = topFirst.playerId || topFirst.id;
+        player = this.mergedResult.players.get(topFirstId) || topFirst;
+      } else {
+        player = this.mergedResult.players.values().next().value;
+      }
+    }
+
+    if (!player) {
+      this.dom.radarPlayerResultContainer.innerHTML = `
+        <div class="p-6 rounded bg-slate-950 border border-slate-800 text-center text-slate-400 text-sm">
+          No hay comandantes registrados en la simulación activa.
+        </div>
+      `;
+      return;
+    }
+
+    this.selectedRadarPlayer = player;
+
+    // 3. Collect Player Planets
+    const targetPlayerId = player.id || player.playerId;
+    const playerPlanets = this.mergedResult.planets.filter(pl => {
+      return pl.playerId === targetPlayerId || (pl.originalPlayerId === (player.originalId || targetPlayerId) && pl.uniKey === player.uniKey);
+    });
+
+    // Sort planets by coordinate
+    playerPlanets.sort((a, b) => {
+      const gA = Number(a.coords?.g ?? (String(a.coords?.raw || '').split(':')[0] || 0));
+      const sA = Number(a.coords?.s ?? (String(a.coords?.raw || '').split(':')[1] || 0));
+      const pA = Number(a.coords?.p ?? (String(a.coords?.raw || '').split(':')[2] || 0));
+
+      const gB = Number(b.coords?.g ?? (String(b.coords?.raw || '').split(':')[0] || 0));
+      const sB = Number(b.coords?.s ?? (String(b.coords?.raw || '').split(':')[1] || 0));
+      const pB = Number(b.coords?.p ?? (String(b.coords?.raw || '').split(':')[2] || 0));
+
+      return (gA * 10000 + sA * 100 + pA) - (gB * 10000 + sB * 100 + pB);
+    });
+
+    // Calculate moons
+    const totalMoons = playerPlanets.filter(pl => pl.moon).length;
+
+    // Scores and ranks
+    const totalScore = player.scores?.total ?? player.score ?? 0;
+    const econScore = player.scores?.economy ?? 0;
+    const resScore = player.scores?.research ?? 0;
+    const milScore = player.scores?.military ?? 0;
+    const honorScore = player.scores?.honor ?? 0;
+    const shipsCount = player.ships ?? 0;
+
+    const rankTotal = player.mergedRanks?.total ?? player.rank ?? '-';
+    const deltaRank = player.deltaRanks?.total ?? 0;
+    const deltaBadge = deltaRank > 0
+      ? `<span class="delta-badge delta-positive">+${deltaRank}</span>`
+      : (deltaRank < 0 ? `<span class="delta-badge delta-negative">${deltaRank}</span>` : '<span class="delta-badge delta-neutral">=</span>');
+
+    const roleTag = player.role === 'destination'
+      ? '<span class="text-cyan-400 font-bold bg-cyan-950/80 border border-cyan-500/40 px-2 py-0.5 rounded text-xs">[★ DESTINO]</span>'
+      : '<span class="text-amber-400 font-bold bg-amber-950/80 border border-amber-500/40 px-2 py-0.5 rounded text-xs">[ÉXODO]</span>';
+
+    const statusLabel = player.status === 'v' ? 'Modo Vacaciones' : (player.status === 'i' || player.status === 'I' ? 'Inactivo' : 'Activo');
+    const speedLight = player.speedTrafficLight || { badgeClass: 'badge-speed-green', label: 'x1' };
+
+    // Get alliance info
+    let allianceTag = '';
+    let allianceName = '';
+    if (player.allianceId && this.mergedResult.alliances) {
+      const ally = this.mergedResult.alliances.get(player.allianceId);
+      if (ally) {
+        allianceTag = ally.tag ? `[${ally.tag}]` : '';
+        allianceName = ally.name || '';
+      }
+    }
+
+    // 4. Render Profile and Planets
+    const container = document.createElement('div');
+    container.className = 'flex flex-col gap-5';
+
+    container.innerHTML = `
+      <!-- Commander Profile Card -->
+      <div class="commander-profile-card">
+        <div class="flex justify-between items-start flex-wrap gap-4 pb-4 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-lg bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-2xl text-cyan-400 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
+              🚀
+            </div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="text-xl font-extrabold text-white tracking-wide">${this.escapeHtml(player.displayName || player.name)}</h3>
+                ${player.originalName && player.originalName !== (player.displayName || player.name) ? `<span class="text-xs text-slate-500 font-mono">(Original: ${this.escapeHtml(player.originalName)})</span>` : ''}
+                ${allianceTag ? `<span class="text-xs font-mono font-bold text-amber-400 bg-amber-950/70 border border-amber-500/30 px-2 py-0.5 rounded" title="${this.escapeHtml(allianceName)}">${this.escapeHtml(allianceTag)}</span>` : ''}
+              </div>
+              <div class="flex items-center gap-2 mt-1 text-xs text-slate-400 flex-wrap">
+                ${roleTag}
+                <span class="font-mono text-cyan-400 font-semibold">Uni ${(player.uniKey || '').toUpperCase().replace('_', ' ')}</span>
+                <span>·</span>
+                <span class="text-slate-300 font-medium">${statusLabel}</span>
+                <span>·</span>
+                <span class="badge-speed ${speedLight.badgeClass}" style="font-size: 0.65rem; padding: 0.05rem 0.35rem;">Vel. Flota ${speedLight.label}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-right">
+            <span class="text-xs uppercase text-slate-400 font-semibold tracking-wider">Clasificación Fusionada</span>
+            <div class="flex items-center justify-end gap-2 mt-0.5">
+              <span class="text-2xl font-black font-mono text-white">#${rankTotal}</span>
+              ${deltaBadge}
+            </div>
+          </div>
+        </div>
+
+        <!-- Registered Scores HUD Matrix -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mt-4">
+          <div class="profile-stat-box">
+            <span class="title">Puntuación Total</span>
+            <span class="value text-cyan-400">${totalScore.toLocaleString()}</span>
+          </div>
+          <div class="profile-stat-box">
+            <span class="title">Economía</span>
+            <span class="value text-emerald-400">${econScore.toLocaleString()}</span>
+          </div>
+          <div class="profile-stat-box">
+            <span class="title">Investigación</span>
+            <span class="value text-blue-400">${resScore.toLocaleString()}</span>
+          </div>
+          <div class="profile-stat-box">
+            <span class="title">Militar General</span>
+            <span class="value text-rose-400">${milScore.toLocaleString()}</span>
+          </div>
+          <div class="profile-stat-box">
+            <span class="title">Naves / Flota</span>
+            <span class="value text-amber-400">${shipsCount.toLocaleString()}</span>
+          </div>
+          <div class="profile-stat-box">
+            <span class="title">Puntos de Honor</span>
+            <span class="value text-purple-400">${honorScore.toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Planet Coordinates Table Section -->
+      <div class="bg-slate-950 p-4 rounded-lg border border-slate-800 shadow-xl">
+        <div class="flex justify-between items-center flex-wrap gap-2 mb-3 pb-2 border-b border-slate-800">
+          <div>
+            <h4 class="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
+              <span>🪐</span> Coordenadas Planetarias del Comandante (${playerPlanets.length} Planetas · ${totalMoons} Lunas)
+            </h4>
+            <span class="text-xs text-slate-400">
+              Haz clic en cualquier coordenada <strong class="text-cyan-400 font-mono">[G:S:P]</strong> para abrir la ventana con la matriz de 15 posiciones del sistema.
+            </span>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 140px;">Coordenada [G:S:P]</th>
+                <th>Nombre del Planeta</th>
+                <th style="width: 120px;">Tipo de Astro</th>
+                <th style="width: 150px;">Estado en Fusión</th>
+                <th>Coordenada Origen</th>
+                <th style="width: 130px; text-align: center;">Acción Táctica</th>
+              </tr>
+            </thead>
+            <tbody id="playerPlanetsTableBody">
+              <!-- Populated below -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    const tbody = container.querySelector('#playerPlanetsTableBody');
+    const frag = document.createDocumentFragment();
+
+    if (playerPlanets.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="6" class="text-center text-slate-500 py-4 italic">No se encontraron coordenadas asociadas a este comandante.</td>';
+      frag.appendChild(tr);
+    } else {
+      for (const pl of playerPlanets) {
+        const tr = document.createElement('tr');
+        const rawCoords = pl.coords?.raw || pl.targetCoords || `${pl.coords?.g}:${pl.coords?.s}:${pl.coords?.p}`;
+        const plG = pl.coords?.g ?? parseInt(rawCoords.split(':')[0], 10);
+        const plS = pl.coords?.s ?? parseInt(rawCoords.split(':')[1], 10);
+        const plP = pl.coords?.p ?? parseInt(rawCoords.split(':')[2], 10);
+
+        const isRelocated = Boolean(pl.relocated);
+        const statusBadge = isRelocated
+          ? `<span class="badge-speed badge-speed-yellow text-xs px-2 py-0.5 font-bold">⚠️ Reubicado</span>`
+          : `<span class="badge-speed badge-speed-green text-xs px-2 py-0.5 font-bold">✓ Conservado</span>`;
+
+        const originCoordsText = pl.originalCoords && pl.originalCoords !== rawCoords
+          ? `<span class="text-slate-400 font-mono line-through mr-1">[${pl.originalCoords}]</span> &rarr; <span class="text-amber-400 font-mono font-bold">[${rawCoords}]</span>`
+          : `<span class="text-slate-400 font-mono">[${rawCoords}]</span>`;
+
+        tr.innerHTML = `
+          <td>
+            <button type="button" class="btn-coord-radar" data-g="${plG}" data-s="${plS}" data-p="${plP}" data-raw="${rawCoords}" title="Abrir matriz de 15 posiciones del sistema solar">
+              <span>[${rawCoords}]</span> <span>🔍</span>
+            </button>
+          </td>
+          <td class="font-bold text-white">
+            ${this.escapeHtml(pl.name)}
+          </td>
+          <td>
+            <span class="text-xs text-slate-300 flex items-center gap-1">
+              ${pl.moon ? '🪐 Planeta + 🌕 Luna' : '🪐 Planeta'}
+            </span>
+          </td>
+          <td>${statusBadge}</td>
+          <td>${originCoordsText}</td>
+          <td style="text-align: center;">
+            <button type="button" class="btn btn-secondary text-xs px-2.5 py-1 btn-open-matrix" data-g="${plG}" data-s="${plS}" data-p="${plP}" data-raw="${rawCoords}">
+              <span>🪐</span> Ver 15 Posiciones
+            </button>
+          </td>
+        `;
+
+        // Coordinate click handlers
+        const handleOpenMatrix = () => {
+          this.openSystemPositionsModal(plG, plS, rawCoords, targetPlayerId);
+        };
+
+        tr.querySelector('.btn-coord-radar').addEventListener('click', handleOpenMatrix);
+        tr.querySelector('.btn-open-matrix').addEventListener('click', handleOpenMatrix);
+
+        frag.appendChild(tr);
+      }
+    }
+
+    tbody.appendChild(frag);
+    this.dom.radarPlayerResultContainer.innerHTML = '';
+    this.dom.radarPlayerResultContainer.appendChild(container);
+  }
+
+  openSystemPositionsModal(galaxy, system, selectedCoord = null, targetPlayerId = null) {
+    if (!this.mergedResult || !this.mergedResult.planets || !this.dom.systemPositionsModal) return;
+
+    const g = parseInt(galaxy, 10) || 1;
+    const s = parseInt(system, 10) || 1;
+
+    // Set title and subtitle
+    if (this.dom.modalMatrixTitle) {
+      this.dom.modalMatrixTitle.innerHTML = `
+        Sistema Solar [${g}:${s}] <span class="text-xs font-normal text-cyan-400 font-mono bg-cyan-950/70 border border-cyan-500/40 px-2 py-0.5 rounded">15 Posiciones</span>
+      `;
+    }
+
+    // Filter planets for galaxy g and system s
+    const systemPlanets = this.mergedResult.planets.filter(pl => {
+      const plG = pl.coords?.g ?? parseInt(String(pl.coords?.raw || pl.targetCoords || '').split(':')[0], 10);
+      const plS = pl.coords?.s ?? parseInt(String(pl.coords?.raw || pl.targetCoords || '').split(':')[1], 10);
+      return plG === g && plS === s;
+    });
+
+    // Count occupancy and distinct commanders
+    const occupiedPos = new Set();
+    const uniqueCommanders = new Set();
+
+    for (const pl of systemPlanets) {
+      const plP = pl.coords?.p ?? parseInt(String(pl.coords?.raw || pl.targetCoords || '').split(':')[2], 10);
+      if (plP >= 1 && plP <= 15) {
+        occupiedPos.add(plP);
+      }
+      if (pl.playerId) {
+        uniqueCommanders.add(pl.playerId);
+      }
+    }
+
+    if (this.dom.matrixOccupancyBadge) {
+      this.dom.matrixOccupancyBadge.textContent = `Ocupación: ${occupiedPos.size}/15 slots ocupados`;
+    }
+    if (this.dom.matrixTotalPlayersBadge) {
+      this.dom.matrixTotalPlayersBadge.textContent = `${uniqueCommanders.size} comandantes en este sistema`;
+    }
+
+    // Build the 15-column minimalist horizontal table
+    if (this.dom.matrixTableBody) {
+      this.dom.matrixTableBody.innerHTML = '';
+      const tr = document.createElement('tr');
+
+      for (let pos = 1; pos <= 15; pos++) {
+        const td = document.createElement('td');
+        td.className = 'matrix-slot-cell';
+
+        // Find all planets occupying position 'pos'
+        const slotPlanets = systemPlanets.filter(pl => {
+          const plP = pl.coords?.p ?? parseInt(String(pl.coords?.raw || pl.targetCoords || '').split(':')[2], 10);
+          return plP === pos;
+        });
+
+        if (slotPlanets.length === 0) {
+          td.innerHTML = `
+            <div class="matrix-empty-slot">
+              <span class="vacant-dash">—</span>
+              <span>Vacante</span>
+            </div>
+          `;
+        } else {
+          // SORT OCCUPANTS FROM HIGHEST TO LOWEST TOTAL SCORE (Mayor a menor puntuación total)
+          slotPlanets.sort((a, b) => {
+            const pA = this.mergedResult.players.get(a.playerId);
+            const pB = this.mergedResult.players.get(b.playerId);
+            const scoreA = pA?.scores?.total ?? pA?.score ?? 0;
+            const scoreB = pB?.scores?.total ?? pB?.score ?? 0;
+            return scoreB - scoreA;
+          });
+
+          const stack = document.createElement('div');
+          stack.className = 'matrix-occupants-stack';
+
+          for (const planet of slotPlanets) {
+            const player = this.mergedResult.players.get(planet.playerId);
+            const playerName = player?.displayName || player?.name || planet.playerName || 'Comandante';
+            const totalScore = player?.scores?.total ?? player?.score ?? 0;
+            const uniTag = (player?.uniKey || planet.uniKey || '').toUpperCase().replace('_', ' ');
+
+            const isSearched = Boolean(
+              (targetPlayerId && planet.playerId === targetPlayerId) ||
+              (selectedCoord && (planet.coords?.raw === selectedCoord || planet.targetCoords === selectedCoord))
+            );
+            const isRetained = !planet.relocated;
+
+            const card = document.createElement('div');
+            card.className = `matrix-occupant-card ${isRetained ? 'is-retained' : 'is-relocated'} ${isSearched ? 'highlight-target-player' : ''}`;
+
+            card.innerHTML = `
+              <div class="occupant-header">
+                <span class="occupant-name" title="${this.escapeHtml(playerName)}">
+                  ${isSearched ? '⭐ ' : ''}${this.escapeHtml(playerName)}
+                </span>
+                <span class="occupant-uni-tag">[${this.escapeHtml(uniTag)}]</span>
+              </div>
+              <div class="occupant-score">
+                ${totalScore.toLocaleString()} <span class="score-unit">pts</span>
+              </div>
+              <div class="occupant-planet-meta" title="${this.escapeHtml(planet.name)}">
+                <span>${planet.moon ? '🪐+🌕' : '🪐'}</span>
+                <span class="truncate">${this.escapeHtml(planet.name)}</span>
+              </div>
+              <span class="occupant-status-tag ${isRetained ? 'tag-retained' : 'tag-relocated'}">
+                ${isRetained ? 'Titular' : 'Reubicado'}
+              </span>
+            `;
+
+            // Clicking an occupant switches radar to that player!
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', () => {
+              if (player) {
+                this.closeMatrixModal();
+                this.selectRadarPlayer(player);
+                this.switchTab('tabPlayerRadar');
+              }
+            });
+
+            stack.appendChild(card);
+          }
+
+          td.appendChild(stack);
+        }
+
+        tr.appendChild(td);
+      }
+
+      this.dom.matrixTableBody.appendChild(tr);
+    }
+
+    // Display modal
+    this.dom.systemPositionsModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  closeMatrixModal() {
+    if (!this.dom.systemPositionsModal) return;
+    this.dom.systemPositionsModal.classList.add('hidden');
+    document.body.style.overflow = '';
   }
 
   resetSession() {
