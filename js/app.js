@@ -1,7 +1,7 @@
-import { OgameApiClient } from './ogameApi.js';
-import { UniverseMergeEngine } from './mergeEngine.js';
-import { UniverseStorage } from './storage.js';
-import { UiIngestController } from './uiIngest.js';
+import { OgameApiClient } from './ogameApi.js?v=2.4';
+import { UniverseMergeEngine } from './mergeEngine.js?v=2.4';
+import { UniverseStorage } from './storage.js?v=2.4';
+import { UiIngestController } from './uiIngest.js?v=2.4';
 
 const MIGRATION_GROUPS = {
   1: {
@@ -91,6 +91,12 @@ export class OgameMergerApp {
       pageSize: 50
     };
 
+    this.conflictsState = {
+      page: 1,
+      pageSize: 50,
+      query: ''
+    };
+
     this.galaxyState = {
       galaxy: 1,
       system: 1
@@ -138,7 +144,17 @@ export class OgameMergerApp {
       universesList: document.getElementById('universesList'),
       emptyUniPlaceholder: document.getElementById('emptyUniPlaceholder'),
       mergeStatusText: document.getElementById('mergeStatusText'),
+      saveUniversesBtn: document.getElementById('saveUniversesBtn'),
       runMergeBtn: document.getElementById('runMergeBtn'),
+
+      // Global Progress Bar
+      globalProgressContainer: document.getElementById('globalProgressContainer'),
+      globalProgressTitle: document.getElementById('globalProgressTitle'),
+      globalProgressSubtext: document.getElementById('globalProgressSubtext'),
+      globalProgressPercent: document.getElementById('globalProgressPercent'),
+      globalProgressBar: document.getElementById('globalProgressBar'),
+      globalProgressLogContainer: document.getElementById('globalProgressLogContainer'),
+      globalProgressLog: document.getElementById('globalProgressLog'),
 
       // Results Tabs & Containers
       resultsContainer: document.getElementById('resultsContainer'),
@@ -209,6 +225,10 @@ export class OgameMergerApp {
       // Tab 4: Conflicts
       coordConflictsList: document.getElementById('coordConflictsList'),
       nickConflictsList: document.getElementById('nickConflictsList'),
+      coordConflictsSearch: document.getElementById('coordConflictsSearch'),
+      coordConflictsPaginationInfo: document.getElementById('coordConflictsPaginationInfo'),
+      coordConflictsPrevBtn: document.getElementById('coordConflictsPrevBtn'),
+      coordConflictsNextBtn: document.getElementById('coordConflictsNextBtn'),
 
       // Tab 5: Export & Import
       exportJsonBtn: document.getElementById('exportJsonBtn'),
@@ -237,10 +257,71 @@ export class OgameMergerApp {
     };
   }
 
+  yieldToUi(ms = 15) {
+    return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, ms)));
+  }
+
+  addProgressLog(message, type = 'info') {
+    if (!this.dom.globalProgressLog) return;
+    const now = new Date();
+    const time = now.toTimeString().split(' ')[0];
+    const item = document.createElement('div');
+    const color = type === 'error' ? 'text-rose-400' : (type === 'success' ? 'text-emerald-400' : (type === 'warn' ? 'text-amber-400' : 'text-cyan-300'));
+    item.className = `leading-tight text-[11px] font-mono ${color}`;
+    item.textContent = `[${time}] ${message}`;
+    this.dom.globalProgressLog.appendChild(item);
+    if (this.dom.globalProgressLogContainer) {
+      this.dom.globalProgressLogContainer.scrollTop = this.dom.globalProgressLogContainer.scrollHeight;
+    }
+  }
+
+  showGlobalProgress(title, subtext = '', percent = 0) {
+    if (!this.dom.globalProgressContainer) return;
+    this.dom.globalProgressContainer.classList.remove('hidden');
+    if (this.dom.globalProgressTitle) this.dom.globalProgressTitle.textContent = title;
+    if (this.dom.globalProgressSubtext) this.dom.globalProgressSubtext.textContent = subtext;
+    const p = Math.min(100, Math.max(0, percent));
+    if (this.dom.globalProgressPercent) this.dom.globalProgressPercent.textContent = `${Math.round(p)}%`;
+    if (this.dom.globalProgressBar) this.dom.globalProgressBar.style.width = `${p}%`;
+    if (subtext) {
+      this.addProgressLog(`${title ? title + ' → ' : ''}${subtext}`);
+    }
+  }
+
+  async updateGlobalProgress(percent, title = null, subtext = null, delay = 15) {
+    if (!this.dom.globalProgressContainer) return;
+    this.dom.globalProgressContainer.classList.remove('hidden');
+    if (title && this.dom.globalProgressTitle) this.dom.globalProgressTitle.textContent = title;
+    if (subtext !== null && this.dom.globalProgressSubtext) this.dom.globalProgressSubtext.textContent = subtext;
+    const p = Math.min(100, Math.max(0, percent));
+    if (this.dom.globalProgressPercent) this.dom.globalProgressPercent.textContent = `${Math.round(p)}%`;
+    if (this.dom.globalProgressBar) this.dom.globalProgressBar.style.width = `${p}%`;
+    if (subtext) {
+      this.addProgressLog(`${title ? title + ' → ' : ''}${subtext}`);
+    }
+    await this.yieldToUi(delay);
+  }
+
+  hideGlobalProgress(delayMs = 600) {
+    setTimeout(() => {
+      if (this.dom.globalProgressContainer) {
+        this.dom.globalProgressContainer.classList.add('hidden');
+      }
+    }, delayMs);
+  }
+
   initIngestModule() {
     this.ingestController = new UiIngestController({
       container: this.dom.bypassIngestContainer,
       storage: this.storage,
+      onProgress: async (percent, title, subtext) => {
+        await this.updateGlobalProgress(percent, title, subtext);
+        if (percent >= 100) {
+          this.hideGlobalProgress(700);
+        } else if (percent === 0) {
+          this.hideGlobalProgress(400);
+        }
+      },
       onUniverseReady: (uData) => {
         this.loadedUniverses.set(uData.uniKey, uData);
         this.renderUniversesList();
@@ -265,33 +346,99 @@ export class OgameMergerApp {
     });
   }
 
-  async initInitialSimulationData() {
+  async healUniversesFromProjectData() {
+    await this.updateGlobalProgress(30, 'Sincronizando Memoria', 'Cargando dataset maestro para reparar datos...');
     try {
-      // 1. Try loading from IndexedDB
-      const saved = await this.storage.getAllUniverses();
-      for (const u of saved) {
-        this.loadedUniverses.set(u.uniKey, u);
+      const response = await fetch('./data/ogame_simulation_latest.json');
+      if (!response.ok) return;
+      const data = await response.json();
+      const masterUnis = this.extractUniversesFromData(data);
+
+      for (const [key, masterUni] of masterUnis.entries()) {
+        if (this.loadedUniverses.has(key)) {
+          const current = this.loadedUniverses.get(key);
+          const currPl = current.players instanceof Map ? current.players.size : (Array.isArray(current.players) ? current.players.length : 0);
+          const currPlanets = Array.isArray(current.planets) ? current.planets.length : 0;
+          if (currPl === 0 || currPlanets === 0 || !(current.players instanceof Map)) {
+            masterUni.role = current.role || masterUni.role;
+            this.loadedUniverses.set(key, masterUni);
+            try {
+              await this.storage.saveUniverse(masterUni);
+            } catch (e) {}
+          }
+        } else {
+          this.loadedUniverses.set(key, masterUni);
+          try {
+            await this.storage.saveUniverse(masterUni);
+          } catch (e) {}
+        }
       }
+
       this.renderUniversesList();
       this.updateMergeActionState();
+      this.ingestController.refreshSavedUniversesList();
+    } catch (err) {
+      console.warn('Auto-healing check warning:', err);
+    }
+  }
 
-      if (this.loadedUniverses.size >= 2) {
-        this.executeSimulation();
+  async initInitialSimulationData() {
+    this.showGlobalProgress('Iniciando OGame Universe Merger', 'Accediendo a base de datos IndexedDB...', 10);
+    this.addProgressLog('Iniciando motor cliente OGame Merger...');
+    try {
+      // 1. Try loading from IndexedDB with safe timeout fallback
+      await this.updateGlobalProgress(25, 'Consultando Almacenamiento', 'Verificando universos en IndexedDB...');
+      
+      const saved = await Promise.race([
+        this.storage.getAllUniverses(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout leyendo IndexedDB (3s)')), 3000))
+      ]).catch(err => {
+        this.addProgressLog(`Aviso IndexedDB: ${err.message}`, 'warn');
+        return [];
+      });
+
+      let hasRealContent = false;
+      if (saved && saved.length >= 2) {
+        const totalPl = saved.reduce((acc, u) => acc + (u.players?.size || 0), 0);
+        const totalPlanets = saved.reduce((acc, u) => acc + (u.planets?.length || 0), 0);
+        this.addProgressLog(`Registros encontrados en memoria: ${saved.length} universos (${totalPl.toLocaleString()} jugadores, ${totalPlanets.toLocaleString()} planetas).`);
+        if (totalPl > 50 && totalPlanets > 50) {
+          hasRealContent = true;
+        }
+      } else {
+        this.addProgressLog(`Almacenamiento local contiene ${saved ? saved.length : 0} universo(s).`, 'warn');
+      }
+
+      if (hasRealContent) {
+        for (const u of saved) {
+          this.loadedUniverses.set(u.uniKey, u);
+        }
+        this.renderUniversesList();
+        this.updateMergeActionState();
+        await this.updateGlobalProgress(60, 'Restaurando Simulación Local', `Cargando ${this.loadedUniverses.size} universos desde memoria...`);
+        this.addProgressLog(`Ejecutando motor de fusión para ${this.loadedUniverses.size} universos locales...`);
+        await this.executeSimulation();
         this.activeDataSourceLabel = `Almacenamiento Local (IndexedDB · ${this.loadedUniverses.size} Universos)`;
         if (this.dom.dashboardSourceStatus) {
           this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel}`;
         }
+        this.addProgressLog('Memoria local restaurada correctamente.', 'success');
+        await this.updateGlobalProgress(100, 'Memoria Restaurada', 'Simulación local lista');
+        this.hideGlobalProgress(1200);
         return;
       }
 
-      // 2. Otherwise ("de lo contrario"): load project's latest generated simulation file from data/
+      // 2. Otherwise: load project's latest generated simulation file from data/
+      this.addProgressLog('Recargando memoria local desde dataset maestro ogame_simulation_latest.json...');
       await this.loadProjectGeneratedFile('data/ogame_simulation_latest.json');
     } catch (err) {
+      this.addProgressLog(`Error en carga inicial: ${err.message}`, 'error');
       console.warn('Initial data load attempt error:', err);
       try {
         await this.loadProjectGeneratedFile('data/ogame_simulation_latest.json');
       } catch (err2) {
-        console.warn('Fallback file load also failed:', err2);
+        this.addProgressLog(`Fallback también falló: ${err2.message}`, 'error');
+        this.hideGlobalProgress(600);
       }
     }
   }
@@ -302,40 +449,72 @@ export class OgameMergerApp {
     if (this.dom.dashboardSourceStatus) {
       this.dom.dashboardSourceStatus.textContent = `Cargando datos (${fileName})...`;
     }
+    await this.updateGlobalProgress(35, 'Cargando Memoria del Proyecto', `Descargando ${fileName} desde almacenamiento...`);
     try {
       const response = await fetch(cleanPath);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} al leer ${cleanPath}`);
       }
+      await this.updateGlobalProgress(55, 'Procesando Dataset Masivo', 'Parseando estructura JSON de la simulación...');
       const data = await response.json();
-      this.hydrateSimulationData(data, `Memoria del Proyecto (${fileName})`, false);
+      await this.hydrateSimulationData(data, `Memoria del Proyecto (${fileName})`, false);
+
+      // Persist hydrated universes to IndexedDB in an atomic batch
+      await this.storage.saveAllUniverses(this.loadedUniverses);
+      this.ingestController.refreshSavedUniversesList();
+
+      await this.updateGlobalProgress(100, 'Sistema Inicializado', `Dataset ${fileName} cargado con éxito`);
+      this.hideGlobalProgress(700);
     } catch (err) {
       console.error(`Error cargando archivo de proyecto ${filePath}:`, err);
       if (this.dom.dashboardSourceStatus) {
         this.dom.dashboardSourceStatus.textContent = `Error: ${err.message}`;
       }
+      this.hideGlobalProgress(400);
     }
   }
 
   async loadFromLocalIndexedDB() {
+    this.showGlobalProgress('Almacenamiento Local', 'Consultando base de datos IndexedDB...', 20);
     try {
       const saved = await this.storage.getAllUniverses();
-      if (!saved || saved.length < 2) {
-        alert(`Almacenamiento local insuficiente: solo hay ${saved ? saved.length : 0} universo(s) guardado(s) en IndexedDB. Se requieren al menos 2 universos para ejecutar una fusión local.`);
+      let hasRealContent = false;
+      if (saved && saved.length >= 2) {
+        const totalPl = saved.reduce((acc, u) => acc + (u.players?.size || 0), 0);
+        const totalPlanets = saved.reduce((acc, u) => acc + (u.planets?.length || 0), 0);
+        if (totalPl > 50 && totalPlanets > 50) {
+          hasRealContent = true;
+        }
+      }
+
+      if (!hasRealContent) {
+        this.hideGlobalProgress(200);
+        const recharge = confirm(
+          `Almacenamiento local insuficiente: solo hay ${saved ? saved.length : 0} universo(s) en IndexedDB.\n\n` +
+          `¿Deseas recargar la memoria local con los 32 universos del censo (6.128 jugadores y 40.802 planetas) y guardarlos en IndexedDB?`
+        );
+        if (recharge) {
+          await this.loadProjectGeneratedFile('data/ogame_simulation_latest.json');
+        }
         return;
       }
+      await this.updateGlobalProgress(50, 'Preparando Universos', `Extrayendo ${saved.length} universos de IndexedDB...`);
       this.loadedUniverses.clear();
       for (const u of saved) {
         this.loadedUniverses.set(u.uniKey, u);
       }
       this.renderUniversesList();
       this.updateMergeActionState();
-      this.executeSimulation();
+      await this.updateGlobalProgress(75, 'Ejecutando Fusión', 'Calculando colisiones y clasificaciones...');
+      await this.executeSimulation();
       this.activeDataSourceLabel = `Almacenamiento Local (IndexedDB · ${this.loadedUniverses.size} Universos)`;
       if (this.dom.dashboardSourceStatus) {
         this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel}`;
       }
+      await this.updateGlobalProgress(100, 'Carga Completada', `${this.loadedUniverses.size} universos sincronizados`);
+      this.hideGlobalProgress(700);
     } catch (err) {
+      this.hideGlobalProgress(200);
       alert(`Error leyendo IndexedDB local: ${err.message}`);
     }
   }
@@ -431,9 +610,16 @@ export class OgameMergerApp {
       }
     });
 
+    // Save loaded universes to IndexedDB
+    if (this.dom.saveUniversesBtn) {
+      this.dom.saveUniversesBtn.addEventListener('click', async () => {
+        await this.saveLoadedUniversesToStorage();
+      });
+    }
+
     // Run merge
-    this.dom.runMergeBtn.addEventListener('click', () => {
-      this.executeSimulation();
+    this.dom.runMergeBtn.addEventListener('click', async () => {
+      await this.executeSimulation();
     });
 
     // Results tabs
@@ -442,6 +628,35 @@ export class OgameMergerApp {
         this.switchTab(btn.dataset.tab);
       });
     });
+
+    // Conflicts pagination & search listeners
+    if (this.dom.coordConflictsSearch) {
+      let conflictDebounce;
+      this.dom.coordConflictsSearch.addEventListener('input', (e) => {
+        clearTimeout(conflictDebounce);
+        conflictDebounce = setTimeout(() => {
+          this.conflictsState.query = e.target.value.trim().toLowerCase();
+          this.conflictsState.page = 1;
+          this.renderConflictsView();
+        }, 200);
+      });
+    }
+
+    if (this.dom.coordConflictsPrevBtn) {
+      this.dom.coordConflictsPrevBtn.addEventListener('click', () => {
+        if (this.conflictsState.page > 1) {
+          this.conflictsState.page--;
+          this.renderConflictsView();
+        }
+      });
+    }
+
+    if (this.dom.coordConflictsNextBtn) {
+      this.dom.coordConflictsNextBtn.addEventListener('click', () => {
+        this.conflictsState.page++;
+        this.renderConflictsView();
+      });
+    }
 
     // Highscore controls
     this.dom.hsCategorySelect.addEventListener('change', (e) => {
@@ -517,8 +732,8 @@ export class OgameMergerApp {
     });
 
     // Export, Import & Reset
-    this.dom.exportJsonBtn.addEventListener('click', () => {
-      this.exportMergedJson();
+    this.dom.exportJsonBtn.addEventListener('click', async () => {
+      await this.exportMergedJson();
     });
 
     this.dom.resetSessionBtn.addEventListener('click', () => {
@@ -757,15 +972,21 @@ export class OgameMergerApp {
     if (this.dom.emptyUniPlaceholder) this.dom.emptyUniPlaceholder.remove();
 
     try {
+      this.showGlobalProgress(`Descargando Universo ${community.toUpperCase()} #${uniNumber}`, 'Conectando con Gameforge API...', 10);
       const universeData = await this.apiClient.fetchUniverseData(
         community,
         uniNumber,
         role,
-        (progress) => {
+        async (progress) => {
           const bar = card.querySelector('.progress-bar');
           const label = card.querySelector('.uni-stats-line span');
           if (bar) bar.style.width = `${progress.percent}%`;
           if (label) label.textContent = `${progress.label} (${progress.current}/${progress.total})`;
+          await this.updateGlobalProgress(
+            progress.percent,
+            `Descargando Universo ${community.toUpperCase()} #${uniNumber}`,
+            `${progress.label} (${progress.current}/${progress.total})`
+          );
         }
       );
 
@@ -774,7 +995,10 @@ export class OgameMergerApp {
       this.renderUniversesList();
       this.updateMergeActionState();
       this.ingestController.refreshSavedUniversesList();
+      await this.updateGlobalProgress(100, 'Descarga Completa', `Universo ${community.toUpperCase()} #${uniNumber} guardado en memoria`);
+      this.hideGlobalProgress(700);
     } catch (err) {
+      this.hideGlobalProgress(200);
       card.classList.remove('loading');
       card.classList.add('error');
       const badge = card.querySelector('.uni-status-badge');
@@ -882,6 +1106,11 @@ export class OgameMergerApp {
         this.renderUniversesList();
         this.updateMergeActionState();
         this.ingestController.refreshSavedUniversesList();
+        if (this.mergedResult && this.loadedUniverses.size >= 2) {
+          await this.executeSimulation();
+        } else if (this.loadedUniverses.size < 2) {
+          this.resetSession();
+        }
       });
 
       frag.appendChild(card);
@@ -928,6 +1157,9 @@ export class OgameMergerApp {
 
   updateMergeActionState() {
     const readyCount = this.loadedUniverses.size;
+    if (this.dom.saveUniversesBtn) {
+      this.dom.saveUniversesBtn.disabled = readyCount === 0;
+    }
     if (readyCount >= 2) {
       this.dom.runMergeBtn.disabled = false;
       this.dom.mergeStatusText.textContent = `Estado: ${readyCount} universos listos para fusionar.`;
@@ -939,15 +1171,138 @@ export class OgameMergerApp {
     }
   }
 
-  executeSimulation() {
-    if (this.loadedUniverses.size < 2) return;
+  async saveLoadedUniversesToStorage() {
+    if (this.loadedUniverses.size === 0) {
+      alert('No hay universos en la lista para guardar.');
+      return;
+    }
+
+    this.showGlobalProgress(
+      'Guardando en Memoria Local (IndexedDB)',
+      `Persistiendo ${this.loadedUniverses.size} universos en el almacenamiento del navegador...`,
+      15
+    );
+    this.addProgressLog(`Iniciando guardado de ${this.loadedUniverses.size} universos en IndexedDB por lotes...`);
 
     try {
-      const universesArray = Array.from(this.loadedUniverses.values());
+      await this.storage.saveAllUniverses(this.loadedUniverses, async (info) => {
+        const pct = Math.min(90, Math.round(15 + (info.processed / info.total) * 75));
+        await this.updateGlobalProgress(
+          pct,
+          'Guardando en IndexedDB',
+          `Lote ${info.batch}/${info.totalBatches} (${info.processed}/${info.total} universos guardados)...`
+        );
+        this.addProgressLog(`[IndexedDB] Guardado lote ${info.batch}/${info.totalBatches} (${info.processed}/${info.total}): ${info.lastUniKey}`);
+      });
+
+      await this.updateGlobalProgress(95, 'Sincronizando Estado', 'Actualizando registros locales...');
+      this.ingestController.refreshSavedUniversesList();
+      this.addProgressLog(`Se guardaron exitosamente ${this.loadedUniverses.size} universos en IndexedDB.`, 'success');
+      await this.updateGlobalProgress(100, 'Memoria Sincronizada', `${this.loadedUniverses.size} universos guardados con éxito`);
+      this.hideGlobalProgress(700);
+
+      alert(
+        `¡Guardado exitoso!\n\n` +
+        `Se han persistido ${this.loadedUniverses.size} universos en la memoria local (IndexedDB) de tu navegador.\n` +
+        `Permanecerán guardados automáticamente incluso si cierras o recargas el navegador.`
+      );
+    } catch (err) {
+      this.hideGlobalProgress(200);
+      this.addProgressLog(`Error al guardar en IndexedDB: ${err.message}`, 'error');
+      alert(`Error al guardar en IndexedDB: ${err.message}`);
+    }
+  }
+
+  async executeSimulation() {
+    if (this.loadedUniverses.size < 2) return;
+    this.showGlobalProgress('Ejecutando Simulación de Fusión', 'Inicializando UniverseMergeEngine...', 15);
+    this.addProgressLog(`Iniciando simulación con ${this.loadedUniverses.size} universos cargados...`);
+    try {
+      // Check if any loaded universe in memory has missing/hollow entities
+      let needsHealing = false;
+      for (const u of this.loadedUniverses.values()) {
+        const pSize = u.players instanceof Map ? u.players.size : (Array.isArray(u.players) ? u.players.length : 0);
+        const plLength = Array.isArray(u.planets) ? u.planets.length : 0;
+        if (pSize === 0 || plLength === 0 || !(u.players instanceof Map)) {
+          needsHealing = true;
+          break;
+        }
+      }
+
+      if (needsHealing) {
+        this.addProgressLog('Sincronizando entidades con dataset maestro de recuperación...');
+        await this.healUniversesFromProjectData();
+      }
+
+      // Explicitly normalize each universe before passing to UniverseMergeEngine
+      this.addProgressLog('Normalizando estructuras y mapas de entidades...');
+      await this.updateGlobalProgress(25, 'Preparando Universos', 'Normalizando entidades y coordenadas...');
+      await this.yieldToUi(10);
+
+      const universesArray = Array.from(this.loadedUniverses.values()).map(u => {
+        let playersMap = u.players instanceof Map ? u.players : new Map();
+        if (!(u.players instanceof Map) && u.players) {
+          if (Array.isArray(u.players)) {
+            playersMap = new Map(u.players.map(p => Array.isArray(p) ? p : [p?.id || p?.playerId, p]));
+          } else if (typeof u.players === 'object' && !('size' in u.players && Object.keys(u.players).length <= 2)) {
+            playersMap = new Map(Object.entries(u.players));
+          }
+        }
+
+        let alliancesMap = u.alliances instanceof Map ? u.alliances : new Map();
+        if (!(u.alliances instanceof Map) && u.alliances) {
+          if (Array.isArray(u.alliances)) {
+            alliancesMap = new Map(u.alliances.map(a => Array.isArray(a) ? a : [a?.id || a?.allianceId, a]));
+          } else if (typeof u.alliances === 'object' && !('size' in u.alliances && Object.keys(u.alliances).length <= 2)) {
+            alliancesMap = new Map(Object.entries(u.alliances));
+          }
+        }
+
+        const planetsList = Array.isArray(u.planets) ? u.planets : [];
+
+        return {
+          ...u,
+          players: playersMap,
+          alliances: alliancesMap,
+          planets: planetsList
+        };
+      });
+
+      const totalPlanetsCount = universesArray.reduce((acc, u) => acc + u.planets.length, 0);
+      const totalPlayersCount = universesArray.reduce((acc, u) => acc + u.players.size, 0);
+      this.addProgressLog(`Universo multiverso preparado: ${universesArray.length} servidores, ${totalPlayersCount.toLocaleString()} jugadores, ${totalPlanetsCount.toLocaleString()} planetas.`);
+
       const engine = new UniverseMergeEngine(universesArray);
-      this.mergedResult = engine.executeMerge();
+
+      const progressCallback = async (info) => {
+        if (info.phase === 'Colisiones') {
+          const pct = Math.min(75, Math.round(35 + (info.current / info.total) * 40));
+          await this.updateGlobalProgress(
+            pct,
+            'Resolviendo Colisiones',
+            `Reubicando por proximidad: lote ${info.chunk}/${info.totalChunks} (${info.current.toLocaleString()} / ${info.total.toLocaleString()} planetas)...`
+          );
+          if (info.current % 2500 === 0 || info.current === info.total) {
+            this.addProgressLog(`[Colisiones] Lote ${info.chunk}/${info.totalChunks}: ${info.current.toLocaleString()} de ${info.total.toLocaleString()} planetas procesados.`);
+          }
+        } else if (info.phase === 'Clasificaciones') {
+          const pct = Math.min(88, Math.round(75 + (info.current / info.total) * 13));
+          await this.updateGlobalProgress(
+            pct,
+            'Recalculando Clasificaciones',
+            `Clasificación (${info.current}/${info.total}): categoría ${info.category}...`
+          );
+          this.addProgressLog(`[Clasificaciones] Recalculada categoría: ${info.category} (${info.current}/${info.total})`);
+        }
+      };
+
+      this.addProgressLog('Ejecutando algoritmo de fusión multiverso por chunks...');
+      this.mergedResult = await engine.executeMerge(progressCallback);
       this.activeDataSourceLabel = `Simulación Local (${this.loadedUniverses.size} Universos)`;
 
+      this.addProgressLog(`Fusión algorítmica finalizada. Galaxias destino: ${this.mergedResult.destination.galaxies}. Colisiones resueltas: ${this.mergedResult.conflicts.coordinates.length.toLocaleString()}.`);
+
+      await this.updateGlobalProgress(90, 'Renderizando Vistas', 'Actualizando explorador galáctico y paneles...');
       this.populateUniverseFilterOptions();
       this.initGalaxySelectOptions(this.mergedResult.destination.galaxies);
 
@@ -960,7 +1315,13 @@ export class OgameMergerApp {
 
       this.dom.resultsContainer.classList.remove('hidden');
       this.switchTab(this.activeTab || 'tabDashboard');
+
+      this.addProgressLog('Todas las vistas y paneles actualizados.', 'success');
+      await this.updateGlobalProgress(100, 'Fusión Exitosa', 'Simulación completada con éxito');
+      this.hideGlobalProgress(700);
     } catch (err) {
+      this.hideGlobalProgress(200);
+      this.addProgressLog(`Error en el motor de fusión: ${err.message}`, 'error');
       alert(`Error en el motor de fusión: ${err.message}`);
     }
   }
@@ -1116,6 +1477,23 @@ export class OgameMergerApp {
   getSlotPlanets(curG, curS, pos) {
     const coordKey = `${curG}:${curS}:${pos}`;
     if (!this.mergedResult || !this.mergedResult.planets) return [];
+
+    // Fast O(1) indexed lookup if available
+    if (this.mergedResult.planetsByOriginalCoord && this.mergedResult.planetsByCurrentCoord) {
+      const origPlanets = this.mergedResult.planetsByOriginalCoord.get(coordKey) || [];
+      const currentPlanets = this.mergedResult.planetsByCurrentCoord.get(coordKey) || [];
+
+      if (origPlanets.length > 1) {
+        return origPlanets;
+      }
+      if (currentPlanets.length >= 1) {
+        return currentPlanets;
+      }
+      if (origPlanets.length === 1) {
+        return origPlanets;
+      }
+      return [];
+    }
 
     // All planets that originally belonged to this coordinate
     const origPlanets = this.mergedResult.planets.filter(pl => pl.originalCoords === coordKey);
@@ -1523,15 +1901,46 @@ export class OgameMergerApp {
   }
 
   renderConflictsView() {
-    const coords = this.mergedResult.conflicts.coordinates;
-    const nicks = this.mergedResult.conflicts.nicknames;
+    if (!this.mergedResult || !this.mergedResult.conflicts) return;
+    const coords = this.mergedResult.conflicts.coordinates || [];
+    const nicks = this.mergedResult.conflicts.nicknames || [];
 
-    // 1. Coordinate Conflicts
-    if (coords.length === 0) {
+    // Filter coords by search query if any
+    let filteredCoords = coords;
+    if (this.conflictsState.query) {
+      const q = this.conflictsState.query.toLowerCase();
+      filteredCoords = coords.filter(c => 
+        (c.originalCoords && c.originalCoords.includes(q)) ||
+        (c.newCoords && c.newCoords.includes(q)) ||
+        (c.planetName && c.planetName.toLowerCase().includes(q)) ||
+        (c.displacedPlayer?.name && c.displacedPlayer.name.toLowerCase().includes(q)) ||
+        (c.retainedPlayer?.name && c.retainedPlayer.name.toLowerCase().includes(q))
+      );
+    }
+
+    const totalConflicts = filteredCoords.length;
+    const startIdx = (this.conflictsState.page - 1) * this.conflictsState.pageSize;
+    const endIdx = Math.min(startIdx + this.conflictsState.pageSize, totalConflicts);
+    const pageRecords = filteredCoords.slice(startIdx, endIdx);
+
+    if (this.dom.coordConflictsPaginationInfo) {
+      this.dom.coordConflictsPaginationInfo.textContent = totalConflicts > 0
+        ? `Mostrando ${startIdx + 1}-${endIdx} de ${totalConflicts.toLocaleString()} colisiones`
+        : '0 colisiones encontradas';
+    }
+    if (this.dom.coordConflictsPrevBtn) {
+      this.dom.coordConflictsPrevBtn.disabled = this.conflictsState.page <= 1;
+    }
+    if (this.dom.coordConflictsNextBtn) {
+      this.dom.coordConflictsNextBtn.disabled = endIdx >= totalConflicts;
+    }
+
+    // 1. Coordinate Conflicts (Paginated)
+    if (totalConflicts === 0) {
       this.dom.coordConflictsList.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem; font-style: italic;">No se detectaron colisiones de coordenadas en este conjunto de servidores.</p>';
     } else {
       const frag = document.createDocumentFragment();
-      for (const c of coords) {
+      for (const c of pageRecords) {
         const item = document.createElement('div');
         item.className = 'conflict-box';
         const roleA = c.retainedPlayer.role === 'destination' ? '[★ Anfitrión]' : '[Éxodo]';
@@ -1600,8 +2009,10 @@ export class OgameMergerApp {
     }
   }
 
-  exportMergedJson() {
+  async exportMergedJson() {
     if (!this.mergedResult) return;
+    this.showGlobalProgress('Exportando Simulación', 'Serializando mapa de entidades a JSON...', 35);
+    await this.yieldToUi(25);
     const exportData = {
       version: 2,
       exportedAt: new Date().toISOString(),
@@ -1641,6 +2052,7 @@ export class OgameMergerApp {
       }))
     };
 
+    await this.updateGlobalProgress(75, 'Generando Descarga', 'Comprimiendo archivo para descarga...');
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1650,20 +2062,238 @@ export class OgameMergerApp {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    await this.updateGlobalProgress(100, 'Descarga Iniciada', 'Archivo JSON generado.');
+    this.hideGlobalProgress(700);
+  }
+
+  extractUniversesFromData(data) {
+    const extracted = new Map();
+
+    const cleanPlanet = (pl, uniKey) => {
+      const rawCoords = pl.originalCoords || pl.coords?.raw || (typeof pl.coords === 'string' ? pl.coords : `${pl.coords?.g || 1}:${pl.coords?.s || 1}:${pl.coords?.p || 1}`);
+      const parts = (rawCoords || '1:1:1').split(':').map(Number);
+      return {
+        ...pl,
+        uniKey: pl.uniKey || uniKey,
+        coords: { g: parts[0] || 1, s: parts[1] || 1, p: parts[2] || 1, raw: rawCoords || '1:1:1' },
+        originalCoords: rawCoords || '1:1:1',
+        targetCoords: rawCoords || '1:1:1'
+      };
+    };
+
+    if (!data) return extracted;
+
+    // 1. Array of universe objects or wrapper object { universes: [...] } or { loadedUniverses: [...] }
+    const uniList = Array.isArray(data) ? data : (Array.isArray(data.universes) ? data.universes : (Array.isArray(data.loadedUniverses) ? data.loadedUniverses : null));
+    if (uniList) {
+      for (const u of uniList) {
+        if (!u || (!u.uniKey && !u.uniNumber)) continue;
+        const uniKey = u.uniKey || `${u.community || 'es'}_${u.uniNumber}`;
+        const players = u.players instanceof Map 
+          ? u.players 
+          : (Array.isArray(u.players) 
+              ? new Map(u.players.map(p => Array.isArray(p) ? p : [p.id, p])) 
+              : new Map(Object.entries(u.players || {})));
+        const alliances = u.alliances instanceof Map 
+          ? u.alliances 
+          : (Array.isArray(u.alliances) 
+              ? new Map(u.alliances.map(a => Array.isArray(a) ? a : [a.id, a])) 
+              : new Map(Object.entries(u.alliances || {})));
+        const planets = (Array.isArray(u.planets) ? u.planets : []).map(p => cleanPlanet(p, uniKey));
+
+        extracted.set(uniKey, {
+          uniKey,
+          community: u.community || uniKey.split('_')[0] || 'es',
+          uniNumber: u.uniNumber || Number(uniKey.split('_')[1]) || 1,
+          role: u.role || 'exodus',
+          serverData: u.serverData || { name: `Uni ${u.uniNumber || 1}`, speedFleetWar: 1 },
+          players,
+          alliances,
+          planets,
+          endpointsLoaded: u.endpointsLoaded || { players: true, universe: true, serverData: true, alliances: true }
+        });
+      }
+      return extracted;
+    }
+
+    // 2. Single universe object (e.g. exported from IndexedDB or Ingestion draft)
+    if ((data.uniKey || (data.community && data.uniNumber)) && (data.serverData || data.players)) {
+      const uniKey = data.uniKey || `${data.community || 'es'}_${data.uniNumber}`;
+      const players = data.players instanceof Map 
+        ? data.players 
+        : (Array.isArray(data.players) 
+            ? new Map(data.players.map(p => Array.isArray(p) ? p : [p.id, p])) 
+            : new Map(Object.entries(data.players || {})));
+      const alliances = data.alliances instanceof Map 
+        ? data.alliances 
+        : (Array.isArray(data.alliances) 
+            ? new Map(data.alliances.map(a => Array.isArray(a) ? a : [a.id, a])) 
+            : new Map(Object.entries(data.alliances || {})));
+      const planets = (Array.isArray(data.planets) ? data.planets : []).map(p => cleanPlanet(p, uniKey));
+
+      extracted.set(uniKey, {
+        uniKey,
+        community: data.community || uniKey.split('_')[0] || 'es',
+        uniNumber: data.uniNumber || Number(uniKey.split('_')[1]) || 1,
+        role: data.role || 'exodus',
+        serverData: data.serverData || { name: `Uni ${data.uniNumber || 1}`, speedFleetWar: 1 },
+        players,
+        alliances,
+        planets,
+        endpointsLoaded: data.endpointsLoaded || { players: true, universe: true, serverData: true, alliances: true }
+      });
+      return extracted;
+    }
+
+    // 3. Full Simulation Export (ogame_simulation_latest.json or exportMergedJson output)
+    if (data.destination || data.sourceUniverses || data.highscores || data.analytics) {
+      if (Array.isArray(data.sourceUniverses)) {
+        for (const u of data.sourceUniverses) {
+          const uniKey = u.uniKey || `${u.community || 'es'}_${u.uniNumber}`;
+          extracted.set(uniKey, {
+            uniKey,
+            community: u.community || uniKey.split('_')[0] || 'es',
+            uniNumber: u.uniNumber || Number(uniKey.split('_')[1]) || 1,
+            role: u.role || 'exodus',
+            serverData: u.serverData || { name: `Uni ${u.uniNumber || 1}`, speedFleetWar: 1 },
+            players: new Map(),
+            alliances: new Map(),
+            planets: [],
+            endpointsLoaded: u.endpointsLoaded || { players: true, universe: true, serverData: true, alliances: true }
+          });
+        }
+      }
+
+      // Partition players
+      let rawPlayers = [];
+      if (Array.isArray(data.players)) {
+        rawPlayers = data.players;
+      } else if (data.players && typeof data.players === 'object') {
+        rawPlayers = Object.entries(data.players);
+      }
+      for (const item of rawPlayers) {
+        const p = Array.isArray(item) ? item[1] : item;
+        const pId = p.id || p.playerId;
+        const uniKey = p.uniKey || (pId && pId.includes('_') ? pId.split('_').slice(0, 2).join('_') : 'es_1');
+        if (!extracted.has(uniKey)) {
+          const parts = uniKey.split('_');
+          extracted.set(uniKey, {
+            uniKey,
+            community: parts[0] || 'es',
+            uniNumber: Number(parts[1]) || 1,
+            role: p.role || 'exodus',
+            serverData: { name: `Uni ${parts[1] || 1}`, speedFleetWar: p.speedFleetWar || 1 },
+            players: new Map(),
+            alliances: new Map(),
+            planets: [],
+            endpointsLoaded: { players: true, universe: true, serverData: true, alliances: true }
+          });
+        }
+        extracted.get(uniKey).players.set(pId, p);
+      }
+
+      // Partition alliances
+      let rawAlliances = [];
+      if (Array.isArray(data.alliances)) {
+        rawAlliances = data.alliances;
+      } else if (data.alliances && typeof data.alliances === 'object') {
+        rawAlliances = Object.entries(data.alliances);
+      }
+      for (const item of rawAlliances) {
+        const a = Array.isArray(item) ? item[1] : item;
+        const aId = a.id || a.allianceId;
+        const uniKey = a.uniKey || (aId && aId.includes('_') ? aId.split('_').slice(0, 2).join('_') : null);
+        if (uniKey && extracted.has(uniKey)) {
+          extracted.get(uniKey).alliances.set(aId, a);
+        }
+      }
+
+      // Partition planets
+      if (Array.isArray(data.planets)) {
+        for (const pl of data.planets) {
+          const uniKey = pl.uniKey || (pl.id && pl.id.includes('_') ? pl.id.split('_').slice(0, 2).join('_') : null);
+          if (uniKey && extracted.has(uniKey)) {
+            extracted.get(uniKey).planets.push(cleanPlanet(pl, uniKey));
+          }
+        }
+      }
+    }
+
+    return extracted;
+  }
+
+  async appendUniversesFromData(data, sourceName = 'Archivo JSON') {
+    await this.updateGlobalProgress(55, 'Extrayendo Universos', 'Analizando entidades y servidores...');
+    const extracted = this.extractUniversesFromData(data);
+
+    if (extracted.size === 0) {
+      throw new Error('El archivo no contiene universos u objetos de simulación reconocibles.');
+    }
+
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    await this.updateGlobalProgress(70, 'Integrando a la Lista', `Añadiendo ${extracted.size} servidores a la memoria activa...`);
+
+    for (const [uniKey, newUni] of extracted.entries()) {
+      if (this.loadedUniverses.has(uniKey)) {
+        const existing = this.loadedUniverses.get(uniKey);
+        newUni.role = existing.role || newUni.role;
+        this.loadedUniverses.set(uniKey, newUni);
+        updatedCount++;
+      } else {
+        this.loadedUniverses.set(uniKey, newUni);
+        addedCount++;
+      }
+
+      try {
+        await this.storage.saveUniverse(newUni);
+      } catch (saveErr) {
+        console.warn(`No se pudo persistir ${uniKey} en IndexedDB:`, saveErr);
+      }
+    }
+
+    this.renderUniversesList();
+    this.updateMergeActionState();
+    this.ingestController.refreshSavedUniversesList();
+
+    if (this.loadedUniverses.size >= 2) {
+      await this.updateGlobalProgress(85, 'Fusionando Universos', 'Recalculando simulación con todos los servidores...');
+      await this.executeSimulation();
+      this.activeDataSourceLabel = `Simulación Multiverso (${this.loadedUniverses.size} Servidores)`;
+      if (this.dom.dashboardSourceStatus) {
+        this.dom.dashboardSourceStatus.textContent = `Fuente Activa: ${this.activeDataSourceLabel}`;
+      }
+    }
+
+    await this.updateGlobalProgress(100, 'Universos Listos', `${extracted.size} servidores sincronizados`);
+
+    const msg = `¡Se incorporaron ${extracted.size} servidor(es) desde "${sourceName}"!\n` +
+      `• Nuevos añadidos a la lista: ${addedCount}\n` +
+      `• Actualizados: ${updatedCount}\n` +
+      `• Total de servidores activos: ${this.loadedUniverses.size}\n\n` +
+      `Ahora puedes manipularlos en la lista superior (cambiar su rol Destino/Éxodo o eliminarlos) y reejecutar la simulación con el botón de Fusión.`;
+    alert(msg);
   }
 
   async importMergedJson(file) {
     if (!file) return;
+    const mbSize = (file.size / (1024 * 1024)).toFixed(1);
+    this.showGlobalProgress('Cargando Archivo Local', `Leyendo ${file.name} (${mbSize} MB)...`, 20);
     try {
       const text = await file.text();
+      await this.updateGlobalProgress(45, 'Parseando JSON Masivo', `Decodificando ${mbSize} MB en memoria...`);
       const data = JSON.parse(text);
-      this.hydrateSimulationData(data, `Archivo JSON (${file.name})`, true);
+      await this.appendUniversesFromData(data, file.name);
+      this.hideGlobalProgress(700);
     } catch (err) {
+      this.hideGlobalProgress(200);
       alert(`Error al importar el archivo JSON: ${err.message}`);
     }
   }
 
-  hydrateSimulationData(data, sourceLabel = 'Archivo JSON', showAlert = false) {
+  async hydrateSimulationData(data, sourceLabel = 'Archivo JSON', showAlert = false) {
+    await this.updateGlobalProgress(65, 'Reconstruyendo Entidades', 'Mapeando jugadores y alianzas...');
     if (!data || (!data.highscores && !data.analytics && !data.destination)) {
       throw new Error('El archivo no tiene el formato válido de una simulación de universo de OGame.');
     }
@@ -1716,7 +2346,24 @@ export class OgameMergerApp {
       analytics.systemDensity = new Map();
     }
 
-    // 5. Set mergedResult
+    // 5. Precompute spatial lookup maps
+    const planetsByOriginalCoord = new Map();
+    const planetsByCurrentCoord = new Map();
+    for (const pl of planets) {
+      const origKey = pl.originalCoords || pl.coords?.raw || '1:1:1';
+      if (!planetsByOriginalCoord.has(origKey)) {
+        planetsByOriginalCoord.set(origKey, []);
+      }
+      planetsByOriginalCoord.get(origKey).push(pl);
+
+      const currKey = pl.targetCoords || pl.coords?.raw || origKey;
+      if (!planetsByCurrentCoord.has(currKey)) {
+        planetsByCurrentCoord.set(currKey, []);
+      }
+      planetsByCurrentCoord.get(currKey).push(pl);
+    }
+
+    // 6. Set mergedResult
     this.mergedResult = {
       destination: data.destination || {
         name: 'Universo Importado',
@@ -1733,42 +2380,20 @@ export class OgameMergerApp {
         nicknames: [],
         tags: []
       },
-      analytics
+      analytics,
+      planetsByOriginalCoord,
+      planetsByCurrentCoord
     };
 
-    // 6. Restore source universes
-    if (Array.isArray(data.sourceUniverses) && data.sourceUniverses.length > 0) {
-      this.loadedUniverses.clear();
-      for (const u of data.sourceUniverses) {
-        const key = u.uniKey || `${u.community}_${u.uniNumber}`;
-        this.loadedUniverses.set(key, {
-          ...u,
-          uniKey: key,
-          players: { size: u.playersCount || (u.players?.size ?? 0) },
-          planets: { length: u.planetsCount || (u.planets?.length ?? 0) },
-          alliances: { size: u.alliancesCount || (u.alliances?.size ?? 0) }
-        });
-      }
-    } else {
-      const distinctUnis = new Set();
-      for (const p of playersMap.values()) {
-        if (p.uniKey) distinctUnis.add(p.uniKey);
-      }
-      for (const key of distinctUnis) {
-        if (!this.loadedUniverses.has(key)) {
-          const parts = key.split('_');
-          const comm = parts[0] || 'es';
-          const num = parts[1] || '1';
-          this.loadedUniverses.set(key, {
-            community: comm,
-            uniNumber: num,
-            uniKey: key,
-            role: 'destination',
-            serverData: { name: `Uni ${num}` },
-            players: { size: 0 },
-            planets: { length: 0 },
-            alliances: { size: 0 }
-          });
+    // 6. Restore source universes as real, operable entities without clearing preloaded ones
+    const extracted = this.extractUniversesFromData(data);
+    for (const [key, uni] of extracted.entries()) {
+      if (!this.loadedUniverses.has(key)) {
+        this.loadedUniverses.set(key, uni);
+      } else {
+        const existing = this.loadedUniverses.get(key);
+        if (!(existing.players instanceof Map) || existing.players.size === 0) {
+          this.loadedUniverses.set(key, uni);
         }
       }
     }

@@ -131,6 +131,30 @@ export class UniverseStorage {
   async saveUniverse(universeData) {
     await this.initPromise;
 
+    // Normalize players into entries [ [id, playerObj], ... ]
+    let playersArr = [];
+    if (universeData.players instanceof Map) {
+      playersArr = Array.from(universeData.players.entries());
+    } else if (Array.isArray(universeData.players)) {
+      playersArr = universeData.players.map(item => Array.isArray(item) ? item : [item?.id || item?.playerId, item]);
+    } else if (universeData.players && typeof universeData.players === 'object') {
+      if (!('size' in universeData.players && Object.keys(universeData.players).length <= 2 && typeof universeData.players.size === 'number')) {
+        playersArr = Object.entries(universeData.players);
+      }
+    }
+
+    // Normalize alliances into entries [ [id, allianceObj], ... ]
+    let alliancesArr = [];
+    if (universeData.alliances instanceof Map) {
+      alliancesArr = Array.from(universeData.alliances.entries());
+    } else if (Array.isArray(universeData.alliances)) {
+      alliancesArr = universeData.alliances.map(item => Array.isArray(item) ? item : [item?.id || item?.allianceId, item]);
+    } else if (universeData.alliances && typeof universeData.alliances === 'object') {
+      if (!('size' in universeData.alliances && Object.keys(universeData.alliances).length <= 2 && typeof universeData.alliances.size === 'number')) {
+        alliancesArr = Object.entries(universeData.alliances);
+      }
+    }
+
     const serializable = {
       uniKey: universeData.uniKey,
       community: universeData.community,
@@ -138,8 +162,8 @@ export class UniverseStorage {
       role: universeData.role || 'exodus',
       savedAt: Date.now(),
       serverData: universeData.serverData,
-      alliances: universeData.alliances instanceof Map ? Array.from(universeData.alliances.entries()) : (Array.isArray(universeData.alliances) ? universeData.alliances : []),
-      players: universeData.players instanceof Map ? Array.from(universeData.players.entries()) : (Array.isArray(universeData.players) ? universeData.players : []),
+      alliances: alliancesArr,
+      players: playersArr,
       planets: Array.isArray(universeData.planets) ? universeData.planets : []
     };
 
@@ -154,6 +178,118 @@ export class UniverseStorage {
   }
 
   /**
+   * Save a batch of universes in chunks of IndexedDB transactions to prevent freezing
+   */
+  async saveAllUniverses(universesList, onProgress = () => {}) {
+    await this.initPromise;
+    const list = Array.isArray(universesList) ? universesList : Array.from(universesList.values());
+    if (!list || list.length === 0) return true;
+
+    const total = list.length;
+    const BATCH_SIZE = 4;
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const chunk = list.slice(i, i + BATCH_SIZE);
+
+      await new Promise((resolve, reject) => {
+        const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+
+        transaction.oncomplete = () => resolve(true);
+        transaction.onerror = (e) => reject(new Error(`Fallo guardando lote en IndexedDB: ${e.target.error}`));
+        transaction.onabort = (e) => reject(new Error(`Transacción abortada: ${e.target.error}`));
+
+        for (const universeData of chunk) {
+          if (!universeData || !universeData.uniKey) continue;
+
+          let playersArr = [];
+          if (universeData.players instanceof Map) {
+            playersArr = Array.from(universeData.players.entries());
+          } else if (Array.isArray(universeData.players)) {
+            playersArr = universeData.players.map(item => Array.isArray(item) ? item : [item?.id || item?.playerId, item]);
+          } else if (universeData.players && typeof universeData.players === 'object') {
+            if (!('size' in universeData.players && Object.keys(universeData.players).length <= 2 && typeof universeData.players.size === 'number')) {
+              playersArr = Object.entries(universeData.players);
+            }
+          }
+
+          let alliancesArr = [];
+          if (universeData.alliances instanceof Map) {
+            alliancesArr = Array.from(universeData.alliances.entries());
+          } else if (Array.isArray(universeData.alliances)) {
+            alliancesArr = universeData.alliances.map(item => Array.isArray(item) ? item : [item?.id || item?.allianceId, item]);
+          } else if (universeData.alliances && typeof universeData.alliances === 'object') {
+            if (!('size' in universeData.alliances && Object.keys(universeData.alliances).length <= 2 && typeof universeData.alliances.size === 'number')) {
+              alliancesArr = Object.entries(universeData.alliances);
+            }
+          }
+
+          const serializable = {
+            uniKey: universeData.uniKey,
+            community: universeData.community || universeData.uniKey.split('_')[0] || 'es',
+            uniNumber: universeData.uniNumber || Number(universeData.uniKey.split('_')[1]) || 1,
+            role: universeData.role || 'exodus',
+            savedAt: Date.now(),
+            serverData: universeData.serverData,
+            alliances: alliancesArr,
+            players: playersArr,
+            planets: Array.isArray(universeData.planets) ? universeData.planets : []
+          };
+
+          store.put(serializable);
+        }
+      });
+
+      const processed = Math.min(i + BATCH_SIZE, total);
+      if (typeof onProgress === 'function') {
+        await onProgress({
+          processed,
+          total,
+          percent: Math.round((processed / total) * 100),
+          batch: Math.ceil((i + 1) / BATCH_SIZE),
+          totalBatches: Math.ceil(total / BATCH_SIZE),
+          lastUniKey: chunk[chunk.length - 1]?.uniKey
+        });
+      }
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    return true;
+  }
+
+  static hydrateEntityMap(raw) {
+    const map = new Map();
+    if (!raw) return map;
+    if (raw instanceof Map) return raw;
+
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (!item) continue;
+        if (Array.isArray(item) && item.length >= 2) {
+          map.set(item[0], item[1]);
+        } else if (typeof item === 'object') {
+          const id = item.id || item.playerId || item.allianceId;
+          if (id) map.set(id, item);
+        }
+      }
+      return map;
+    }
+
+    if (typeof raw === 'object') {
+      if ('size' in raw && Object.keys(raw).length <= 2 && typeof raw.size === 'number') {
+        return map;
+      }
+      for (const [k, v] of Object.entries(raw)) {
+        if (v && typeof v === 'object') {
+          const id = v.id || v.playerId || v.allianceId || k;
+          map.set(id, v);
+        }
+      }
+    }
+    return map;
+  }
+
+  /**
    * Get universe by key (e.g., 'es_190') and reconstruct Map structures
    */
   async getUniverse(uniKey) {
@@ -165,23 +301,27 @@ export class UniverseStorage {
       const req = store.get(uniKey);
 
       req.onsuccess = () => {
-        const data = req.result;
-        if (!data) {
-          resolve(null);
-          return;
-        }
+        try {
+          const data = req.result;
+          if (!data) {
+            resolve(null);
+            return;
+          }
 
-        const hydrated = {
-          uniKey: data.uniKey,
-          community: data.community,
-          uniNumber: data.uniNumber,
-          role: data.role || 'exodus',
-          serverData: data.serverData,
-          alliances: Array.isArray(data.alliances) ? new Map(data.alliances) : (data.alliances instanceof Map ? data.alliances : new Map()),
-          players: Array.isArray(data.players) ? new Map(data.players) : (data.players instanceof Map ? data.players : new Map()),
-          planets: Array.isArray(data.planets) ? data.planets : []
-        };
-        resolve(hydrated);
+          const hydrated = {
+            uniKey: data.uniKey,
+            community: data.community,
+            uniNumber: data.uniNumber,
+            role: data.role || 'exodus',
+            serverData: data.serverData,
+            alliances: UniverseStorage.hydrateEntityMap(data.alliances),
+            players: UniverseStorage.hydrateEntityMap(data.players),
+            planets: Array.isArray(data.planets) ? data.planets : []
+          };
+          resolve(hydrated);
+        } catch (err) {
+          reject(err);
+        }
       };
 
       req.onerror = (e) => reject(new Error(`Fallo recuperando universo: ${e.target.error}`));
@@ -200,19 +340,23 @@ export class UniverseStorage {
       const req = store.getAll();
 
       req.onsuccess = () => {
-        const list = req.result || [];
-        const hydratedList = list.map(data => ({
-          uniKey: data.uniKey,
-          community: data.community,
-          uniNumber: data.uniNumber,
-          role: data.role || 'exodus',
-          savedAt: data.savedAt,
-          serverData: data.serverData,
-          alliances: Array.isArray(data.alliances) ? new Map(data.alliances) : (data.alliances instanceof Map ? data.alliances : new Map()),
-          players: Array.isArray(data.players) ? new Map(data.players) : (data.players instanceof Map ? data.players : new Map()),
-          planets: Array.isArray(data.planets) ? data.planets : []
-        }));
-        resolve(hydratedList);
+        try {
+          const list = req.result || [];
+          const hydratedList = list.map(data => ({
+            uniKey: data.uniKey,
+            community: data.community,
+            uniNumber: data.uniNumber,
+            role: data.role || 'exodus',
+            savedAt: data.savedAt,
+            serverData: data.serverData,
+            alliances: UniverseStorage.hydrateEntityMap(data.alliances),
+            players: UniverseStorage.hydrateEntityMap(data.players),
+            planets: Array.isArray(data.planets) ? data.planets : []
+          }));
+          resolve(hydratedList);
+        } catch (err) {
+          reject(err);
+        }
       };
 
       req.onerror = (e) => reject(new Error(`Fallo listando universos: ${e.target.error}`));
@@ -253,3 +397,5 @@ export class UniverseStorage {
     });
   }
 }
+
+export const LocalStorageService = UniverseStorage;

@@ -19,6 +19,7 @@ export class UiIngestController {
   constructor(options) {
     this.container = options.container;
     this.storage = options.storage;
+    this.onProgress = options.onProgress || (() => {});
     this.onUniverseReady = options.onUniverseReady || (() => {});
     this.onUniverseDeleted = options.onUniverseDeleted || (() => {});
     this.onUniverseRoleChanged = options.onUniverseRoleChanged || (() => {});
@@ -561,6 +562,7 @@ export class UiIngestController {
 
     try {
       this.clearEndpointError(epId);
+      await this.onProgress(20, 'Procesando XML Local', `Validando y parseando ${epId}.xml...`);
 
       // 1. Validation of XML and root tag
       const xmlDoc = this.parser.validateAndParse(xmlString, expectedRoot);
@@ -580,7 +582,11 @@ export class UiIngestController {
           xmlDoc,
           uniKey,
           this.currentRole,
-          playersRef
+          playersRef,
+          async (prog) => {
+            const p = 25 + Math.round((prog.percent || 0) * 0.55);
+            await this.onProgress(p, 'Parseando Planetas', `${prog.processed} / ${prog.total} posiciones calculadas...`);
+          }
         );
         this.draftStats.planetsCount = this.draftData.planets.length;
       } else if (epId.startsWith('highscore_')) {
@@ -593,6 +599,8 @@ export class UiIngestController {
         this.draftStats.scoresCount += appliedCount;
       }
 
+      await this.onProgress(85, 'Guardando Borrador', `Almacenando ${epId} en IndexedDB...`);
+
       // 3. Record timestamp for this endpoint
       this.endpointsTimestamp[epId] = Date.now();
 
@@ -601,7 +609,9 @@ export class UiIngestController {
 
       // 5. Update UI
       this.renderEndpointsCards();
+      await this.onProgress(100, 'XML Procesado', `${epId}.xml cargado exitosamente`);
     } catch (err) {
+      await this.onProgress(0, 'Error en XML', err.message);
       this.showEndpointError(epId, err.message);
     }
   }
@@ -648,14 +658,18 @@ export class UiIngestController {
     };
 
     try {
+      await this.onProgress(25, 'Guardando Universo', 'Estructurando datos en memoria...');
       await this.storage.saveUniverse(payload);
       // Remove draft since it has been finalized
+      await this.onProgress(75, 'Guardando en IndexedDB', 'Persistiendo entidades...');
       await this.storage.deleteDraft(uniKey);
 
+      await this.onProgress(100, 'Universo Guardado', `${payload.community.toUpperCase()} #${payload.uniNumber} almacenado con éxito`);
       alert(`¡Universo ${payload.community.toUpperCase()} #${payload.uniNumber} guardado en IndexedDB con éxito!`);
       this.refreshSavedUniversesList();
       this.onUniverseReady(payload);
     } catch (err) {
+      await this.onProgress(0, 'Error al Guardar', err.message);
       alert(`Error al guardar en IndexedDB: ${err.message}`);
     }
   }

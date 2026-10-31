@@ -3,3 +3,13 @@ ogame_merged_*.json
 *.log
 .DS_Store
 Thumbs.db
+
+# Subproyecto analítico de datos masivos (excluido de git según requerimiento)
+data_analyzer/
+__pycache__/
+*.py[cod]
+.venv/
+env/
+server.js
+
+

@@ -22,18 +22,46 @@
           <p class="logo-desc text-xs text-slate-400">Simulador Client-side de Fusión Galáctica, Colisiones y Recálculo de Highscores</p>
         </div>
       </div>
-      <div class="header-proxy-panel flex items-center gap-2 text-xs">
-        <label for="proxySelect" class="text-slate-400 font-semibold">Fallback Proxy:</label>
-        <select id="proxySelect" class="bg-slate-950 border border-slate-800 text-slate-300 rounded px-2 py-1 font-mono text-xs">
-          <option value="corsproxy" selected>corsproxy.io</option>
-          <option value="allorigins">allorigins.win</option>
-          <option value="codetabs">codetabs.com</option>
-          <option value="direct">Directo (Extensiones / Local)</option>
-          <option value="custom">Personalizado...</option>
-        </select>
-        <input type="text" id="customProxyInput" placeholder="https://mi-proxy/?url=" class="hidden bg-slate-950 border border-slate-800 text-slate-200 rounded px-2 py-1 text-xs font-mono">
+      <div class="flex items-center gap-3 flex-wrap">
+        <a href="reporte_lcm_pluto.html" target="_blank" class="px-3 py-1.5 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-rose-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 border border-amber-500/50 rounded-lg flex items-center gap-1.5 font-mono text-xs font-semibold shadow-md transition-all hover:scale-105">
+          <span>🛡️</span> Reporte Alianza LCM (Pluto)
+        </a>
+        <div class="header-proxy-panel flex items-center gap-2 text-xs">
+          <label for="proxySelect" class="text-slate-400 font-semibold">Fallback Proxy:</label>
+          <select id="proxySelect" class="bg-slate-950 border border-slate-800 text-slate-300 rounded px-2 py-1 font-mono text-xs">
+            <option value="corsproxy" selected>corsproxy.io</option>
+            <option value="allorigins">allorigins.win</option>
+            <option value="codetabs">codetabs.com</option>
+            <option value="direct">Directo (Extensiones / Local)</option>
+            <option value="custom">Personalizado...</option>
+          </select>
+          <input type="text" id="customProxyInput" placeholder="https://mi-proxy/?url=" class="hidden bg-slate-950 border border-slate-800 text-slate-200 rounded px-2 py-1 text-xs font-mono">
+        </div>
       </div>
     </header>
+
+    <!-- GLOBAL PROGRESS HUD / LOADING BAR -->
+    <div id="globalProgressContainer" class="hidden hud-panel p-3.5 rounded-lg border border-cyan-500/50 bg-slate-950/95 shadow-[0_0_25px_rgba(0,240,255,0.15)] transition-all duration-300">
+      <div class="flex justify-between items-center flex-wrap gap-2 mb-2 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="hud-pulse-dot"></span>
+          <span id="globalProgressTitle" class="font-bold text-white uppercase tracking-wider font-mono text-xs">
+            Cargando Memoria del Proyecto...
+          </span>
+          <span id="globalProgressSubtext" class="text-slate-400 font-mono text-[11px]">Iniciando...</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="globalProgressPercent" class="font-mono text-cyan-400 font-bold text-xs">0%</span>
+        </div>
+      </div>
+      <div class="progress-track h-2 bg-slate-900 border border-slate-800 rounded-full overflow-hidden relative mb-2">
+        <div id="globalProgressBar" class="h-full bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 w-0 transition-all duration-200 shadow-[0_0_12px_#00f0ff]"></div>
+      </div>
+      <!-- Live Progress & Loading Log Feed -->
+      <div id="globalProgressLogContainer" class="bg-black/70 border border-slate-800/90 rounded p-2 text-[11px] font-mono text-slate-300 max-h-24 overflow-y-auto">
+        <div id="globalProgressLog" class="flex flex-col gap-1"></div>
+      </div>
+    </div>
 
     <!-- INGESTION MODE TABS -->
     <div class="flex gap-2 border-b border-slate-800 pb-2">
@@ -140,9 +168,14 @@
           <span>📂</span> Importar Simulación JSON
           <input type="file" id="importJsonInput" accept=".json,application/json" class="hidden">
         </label>
-        <button id="runMergeBtn" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-5 py-2.5 rounded text-sm transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
-          <span>⚡</span> Ejecutar Simulación de Fusión
-        </button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button id="saveUniversesBtn" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 hover:border-emerald-400 font-semibold px-4 py-2.5 rounded text-sm transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm" title="Guardar todos los universos actuales en la memoria local (IndexedDB) para no tener que cargarlos de nuevo">
+            <span>💾</span> Guardar Universos en Memoria Local
+          </button>
+          <button id="runMergeBtn" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-5 py-2.5 rounded text-sm transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm">
+            <span>⚡</span> Ejecutar Simulación de Fusión
+          </button>
+        </div>
       </div>
     </section>
 
@@ -481,9 +514,19 @@
 
       <!-- TAB 4: Conflicts & Relocations -->
       <section id="tabConflicts" class="tab-content hidden pt-4">
-        <h3 class="text-xs font-bold uppercase text-amber-400 mb-3 tracking-wider">
-          Planetas Reubicados por Colisión de Coordenadas [G:S:P]
-        </h3>
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+          <h3 class="text-xs font-bold uppercase text-amber-400 tracking-wider">
+            Planetas Reubicados por Colisión de Coordenadas [G:S:P]
+          </h3>
+          <div class="flex items-center gap-2">
+            <input type="text" id="coordConflictsSearch" placeholder="Filtrar jugador o coord..." class="bg-slate-900 border border-slate-700 text-xs px-2.5 py-1 rounded text-white focus:outline-none focus:border-amber-400 placeholder:text-slate-600" style="min-width: 170px;" />
+            <span id="coordConflictsPaginationInfo" class="text-xs font-mono text-slate-400">0 colisiones</span>
+            <div class="flex gap-1">
+              <button id="coordConflictsPrevBtn" type="button" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1 rounded disabled:opacity-40" disabled>◀</button>
+              <button id="coordConflictsNextBtn" type="button" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1 rounded disabled:opacity-40" disabled>▶</button>
+            </div>
+          </div>
+        </div>
         <div id="coordConflictsList">
           <!-- Populated by app.js -->
         </div>
@@ -635,6 +678,6 @@
     </div>
   </div>
 
-  <script type="module" src="./js/app.js"></script>
+  <script type="module" src="./js/app.js?v=2.5"></script>
 </body>
 </html>
